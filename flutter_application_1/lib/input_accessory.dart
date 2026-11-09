@@ -1,5 +1,7 @@
 import 'package:cupertino_interactive_keyboard/cupertino_interactive_keyboard.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_application_1/accessory_composer.dart';
+import 'package:keyboard_actions_bar/keyboard_actions_bar.dart';
 
 const _kNumberOfItems = 100;
 
@@ -11,62 +13,33 @@ class InputAccessory extends StatefulWidget {
 }
 
 class _InputAccessoryState extends State<InputAccessory> {
-  final _inputController = TextEditingController();
-
-  @override
-  void dispose() {
-    super.dispose();
-    _inputController.dispose();
-  }
+  final _controller = CupertinoHostedInputAccessoryController();
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Input Accessory"),
-      ),
+      appBar: AppBar(title: const Text("Input Accessory")),
       body: Column(
         children: [
           Expanded(
             child: CupertinoInteractiveKeyboard(
               child: ListView.separated(
                 itemCount: _kNumberOfItems,
-                itemBuilder: (context, index) => ListTile(
-                  title: Text("List Item #$index"),
-                ),
+                itemBuilder: (context, index) =>
+                    ListTile(title: Text("List Item #$index")),
                 separatorBuilder: (context, index) => const Divider(height: 1),
               ),
             ),
           ),
-          CupertinoInputAccessory(
-            child: Material(
-              elevation: 8,
-              color: Theme.of(context).colorScheme.surface,
-              child: SafeArea(
-                top: false,
-                minimum: const EdgeInsets.all(12),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _inputController,
-                        decoration: const InputDecoration(
-                          hintText: "Input comment...",
-                        ),
-                        maxLines: null,
-                        keyboardType: TextInputType.multiline,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      onPressed: () => _inputController.text = "",
-                      icon: const Icon(Icons.send),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          CupertinoHostedInputAccessory(
+            accessoryEntrypoint: 'accessoryMain',
+            accessoryLibraryURI:
+                'package:flutter_application_1/accessory_composer.dart',
+            placeholder: 'Inputent...',
+            backgroundColor: colorScheme.surface, // config reaches the bar
+            controller: _controller,
+            onSend: (_) => _controller.clear(),
           ),
         ],
       ),

@@ -54,7 +54,8 @@ class _AccessoryComposerState extends State<AccessoryComposer> {
       builder: (context, config, _) {
         return Material(
           elevation: 8,
-          color: config.backgroundColor ?? Theme.of(context).colorScheme.surface,
+          color:
+              config.backgroundColor ?? Theme.of(context).colorScheme.surface,
           child: SafeArea(
             top: false,
             minimum: const EdgeInsets.all(12),
@@ -67,7 +68,7 @@ class _AccessoryComposerState extends State<AccessoryComposer> {
                     maxLines: null,
                     style: TextStyle(color: config.textColor),
                     decoration: InputDecoration(
-                      hintText: config.placeholder,
+                      hintText: "nekddkdklll",
                       hintStyle: TextStyle(color: config.placeholderColor),
                     ),
                     onChanged: widget.controller.textChanged,
@@ -76,7 +77,7 @@ class _AccessoryComposerState extends State<AccessoryComposer> {
                 const SizedBox(width: 8),
                 IconButton(
                   onPressed: () => widget.controller.send(_field.text),
-                  icon: Icon(Icons.send, color: config.iconColor),
+                  icon: Icon(Icons.abc, color: config.iconColor),
                 ),
               ],
             ),
