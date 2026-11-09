@@ -22,73 +22,96 @@ void main() {
     messenger.setMockMethodCallHandler(channel, null);
   });
 
+  /// Delivers a native -> accessory call and pumps the resulting frame.
   Future<void> push(
     WidgetTester tester,
     String method,
-    Map<String, Object?> arguments,
+    Object? arguments,
   ) async {
     await messenger.handlePlatformMessage(
       channel.name,
-      const StandardMethodCodec().encodeMethodCall(MethodCall(method, arguments)),
+      const StandardMethodCodec().encodeMethodCall(
+        MethodCall(method, arguments),
+      ),
       (_) {},
     );
     await tester.pump();
   }
 
-  testWidgets('hosts a custom accessory UI and bridges config, text and callbacks',
+  testWidgets('runCupertinoAccessory renders the builder and reports ready',
       (tester) async {
-    late CupertinoAccessoryController accessory;
+    late CupertinoAccessoryController controller;
 
-    await tester.pumpWidget(
-      CupertinoAccessoryHost(
-        builder: (context, controller) {
-          accessory = controller;
-          return Column(
-            children: [
-              ValueListenableBuilder<CupertinoAccessoryConfig>(
-                valueListenable: controller.config,
-                builder: (context, config, _) => Text(
-                  'hint:${config.placeholder} bg:${config.backgroundColor}',
-                ),
-              ),
-              ValueListenableBuilder<String>(
-                valueListenable: controller.text,
-                builder: (context, text, _) => Text('text:$text'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
+    runCupertinoAccessory((context, value) {
+      controller = value;
+      return const Center(child: Text('accessory'));
+    });
+    await tester.pump();
     await tester.pump();
 
+    expect(find.text('accessory'), findsOneWidget);
+    expect(controller, isA<CupertinoAccessoryController>());
     expect(calls.where((call) => call.method == 'ready'), hasLength(1));
+  });
 
-    await push(tester, 'config', {
-      'placeholder': 'Say something...',
-      'text': 'hello',
-      'backgroundColor': 0xFF102030,
+  testWidgets(
+      'routes native calls to onInvoke and accessory calls to the channel',
+      (tester) async {
+    late CupertinoAccessoryController controller;
+    final received = <Map<String, Object?>>[];
+
+    runCupertinoAccessory((context, value) {
+      controller = value;
+      return const SizedBox.shrink();
+    });
+    await tester.pump();
+    await tester.pump();
+
+    controller.onInvoke = (method, arguments) {
+      received.add({'method': method, 'arguments': arguments});
+    };
+
+    await push(tester, 'invoke', {
+      'method': 'theme',
+      'arguments': {'surface': 1},
     });
 
-    expect(find.text('hint:Say something... bg:${const Color(0xFF102030)}'),
-        findsOneWidget);
-    expect(find.text('text:hello'), findsOneWidget);
-
-    await push(tester, 'setText', {'text': 'from native'});
-    expect(find.text('text:from native'), findsOneWidget);
+    expect(received, [
+      {
+        'method': 'theme',
+        'arguments': {'surface': 1},
+      },
+    ]);
 
     calls.clear();
-    accessory.textChanged('typed');
-    accessory.send('typed');
-    expect(
-      calls.map((call) => call.method).toList(),
-      ['textChanged', 'send'],
-    );
-    expect(calls.first.arguments, {'text': 'typed'});
+    controller.invoke('textChanged', {'text': 'hello'});
+    controller.invoke('ping');
+    await tester.pump();
 
-    // A later config push carries the stale create-time text; it must not
-    // overwrite what the user typed.
-    await push(tester, 'config', {'placeholder': 'Say something...', 'text': 'stale'});
-    expect(find.text('text:from native'), findsOneWidget);
+    expect(calls.map((call) => call.method), ['invoke', 'invoke']);
+    expect(calls[0].arguments, {
+      'method': 'textChanged',
+      'arguments': {'text': 'hello'},
+    });
+    expect(calls[1].arguments, {'method': 'ping', 'arguments': null});
+  });
+
+  testWidgets('removes the channel handler on dispose', (tester) async {
+    late CupertinoAccessoryController controller;
+    var invokes = 0;
+
+    runCupertinoAccessory((context, value) {
+      controller = value;
+      return const SizedBox.shrink();
+    });
+    await tester.pump();
+    await tester.pump();
+
+    controller.onInvoke = (method, arguments) => invokes++;
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await push(tester, 'invoke', {'method': 'theme', 'arguments': null});
+
+    expect(invokes, 0);
   });
 }

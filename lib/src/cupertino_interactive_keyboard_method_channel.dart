@@ -65,22 +65,35 @@ class MethodChannelCupertinoInteractiveKeyboard
   }
 
   @override
-  Future<double?> createHostedAccessory(Map<String, Object?> config) async {
+  Future<double?> createHostedAccessory({
+    required String entrypoint,
+    required String libraryURI,
+    required double height,
+  }) async {
     final result = await methodChannel.invokeMethod<Map<Object?, Object?>>(
       'createHostedAccessory',
-      config,
+      {
+        'entrypoint': entrypoint,
+        'libraryURI': libraryURI,
+        'height': height,
+      },
     );
     return (result?['height'] as num?)?.toDouble();
   }
 
   @override
-  Future<void> updateHostedAccessory(Map<String, Object?> config) {
-    return methodChannel.invokeMethod('updateHostedAccessory', config);
+  Future<void> updateHostedAccessoryHeight(double height) {
+    return methodChannel.invokeMethod('updateHostedAccessoryHeight', {
+      'height': height,
+    });
   }
 
   @override
-  Future<void> setHostedAccessoryText(String text) {
-    return methodChannel.invokeMethod('setHostedAccessoryText', {'text': text});
+  Future<void> invokeHostedAccessory(String method, Object? arguments) {
+    return methodChannel.invokeMethod('invokeHostedAccessory', {
+      'method': method,
+      'arguments': arguments,
+    });
   }
 
   @override
@@ -97,16 +110,14 @@ class MethodChannelCupertinoInteractiveKeyboard
           'height': (arguments['height'] as num).toDouble(),
         });
         return Future.value();
-      case 'hostedAccessoryTextChanged':
-        _hostedAccessoryEvents.add({
-          'type': 'textChanged',
-          'text': arguments['text'] as String? ?? '',
-        });
+      case 'hostedAccessoryReady':
+        _hostedAccessoryEvents.add({'type': 'ready'});
         return Future.value();
-      case 'hostedAccessorySend':
+      case 'hostedAccessoryInvoke':
         _hostedAccessoryEvents.add({
-          'type': 'send',
-          'text': arguments['text'] as String? ?? '',
+          'type': 'invoke',
+          'method': arguments['method'] as String? ?? '',
+          'arguments': arguments['arguments'],
         });
         return Future.value();
       default:

@@ -1,36 +1,273 @@
-[![Stand With Ukraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/badges/StandWithUkraine.svg)](https://stand-with-ukraine.pp.ua)
+This project is based off the [cupertino_interactive_keyboard](https://github.com/ky1vstar/cupertino_interactive_keyboard) repo.
 
 # Cupertino Interactive Keyboard
 
-A Flutter plugin intended to achieve native iOS [interactively dismissible keyboard](https://developer.apple.com/documentation/uikit/uiscrollview/keyboarddismissmode/interactive).
-It can be used as temporary solution while we are waiting [this issue](https://github.com/flutter/flutter/issues/57609) to be resolved by the Flutter team 🙏.
-On other side, this plugin doesn't rely on questionable keyboard screenshot approach, so it is expected to work more solid.
+A Flutter plugin for the iOS [interactively dismissible keyboard](https://developer.apple.com/documentation/uikit/uiscrollview/keyboarddismissmode/interactive),
+with an input accessory bar that is **your own Flutter UI** and still moves with the keyboard
+frame for frame.
 
-![](resources/demo1.gif)
-![](resources/demo2.gif)
+## Why this plugin exists
 
-## Getting Started
+The keyboard can be dragged down with the list to dismiss it interactively. The hard part is the
+bar above the keyboard: a Flutter widget drawn inside the app's Flutter view is composited one
+frame after UIKit's keyboard, so it trails the keyboard while it moves, and a native UIKit bar is
+no longer a Flutter widget.
 
-The `CupertinoInteractiveKeyboard` defines the area where the draggable keyboard is enabled.
-Using scrollable widget as its child is optional.
+This plugin solves both by hosting a **second Flutter engine** inside the real keyboard container:
+UIKit positions the container (pinned to the keyboard layout guide), Flutter draws the bar inside
+it. You get a normal Flutter widget tree — `TextField`, `Material`, anything — glued to the
+top edge of the keyboard on open, drag, release and at rest.
 
-```dart
-CupertinoInteractiveKeyboard(
-  child: ListView.builder(
-    ...
-  ),
-);
+## Install
+
+```yaml
+dependencies:
+  cupertino_interactive_keyboard: ^1.1.0
 ```
 
-In chat-like UI where you have input bar attached to the bottom, you can use the `CupertinoInputAccessory` widget.
-It designed to use its child's height as native [input accessory view](https://developer.apple.com/documentation/uikit/uiresponder/1621119-inputaccessoryview) size.
+iOS only. The hosted bar needs iOS 15+; older versions keep the plugin's inset behaviour and do
+not create the bar.
+
+## The hosted bar (recommended)
+
+### 1. Write your composer in its own library
+
+`lib/accessory_composer.dart`:
 
 ```dart
-CupertinoInputAccessory(
-  child: TextField(
-    ...
-  ),
-);
+import 'package:cupertino_interactive_keyboard/cupertino_interactive_keyboard.dart';
+import 'package:flutter/material.dart';
+
+/// Entrypoint of the accessory engine: the plugin runs this in a second
+/// isolate and puts its view inside the keyboard accessory container.
+@pragma('vm:entry-point')
+void accessoryMain() {
+  runCupertinoAccessory(
+    (context, controller) => Composer(controller: controller),
+  );
+}
+
+class Composer extends StatefulWidget {
+  const Composer({super.key, required this.controller});
+
+  final CupertinoAccessoryController controller;
+
+  @override
+  State<Composer> createState() => _ComposerState();
+}
+
+class _ComposerState extends State<Composer> {
+  final _field = TextEditingController();
+  Color _background = Colors.white;
+  Color _foreground = Colors.black;
+
+  @override
+  void initState() {
+    super.initState();
+    // Messages come from the app's main isolate.
+    widget.controller.onInvoke = (method, arguments) {
+      final args = (arguments as Map?) ?? const {};
+      switch (method) {
+        case 'theme':
+          setState(() {
+            _background = Color(args['background'] as int);
+            _foreground = Color(args['foreground'] as int);
+          });
+          break;
+        case 'setText':
+          _field.text = args['text'] as String? ?? '';
+          break;
+      }
+    };
+  }
+
+  @override
+  void dispose() {
+    _field.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: _background,
+      child: SafeArea(
+        top: false,
+        minimum: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _field,
+                maxLines: null,
+                style: TextStyle(color: _foreground),
+                decoration: const InputDecoration(hintText: 'Input comment...'),
+                onChanged: (text) =>
+                    widget.controller.invoke('textChanged', {'text': text}),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.send),
+              color: _foreground,
+              onPressed: () =>
+                  widget.controller.invoke('send', {'text': _field.text}),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 ```
 
-See the [full example](example/lib) of complete implementation.
+### 2. Put the bar on the screen
+
+```dart
+class ChatScreen extends StatefulWidget {
+  const ChatScreen({super.key});
+
+  @override
+  State<ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends State<ChatScreen> {
+  late final CupertinoHostedInputAccessoryController _bar;
+
+  @override
+  void initState() {
+    super.initState();
+    _bar = CupertinoHostedInputAccessoryController()
+      ..onReady = _sendTheme
+      ..onInvoke = _handleBarMessage;
+  }
+
+  void _sendTheme() {
+    final scheme = Theme.of(context).colorScheme;
+    _bar.invoke('theme', {
+      'background': scheme.surface.toARGB32(),
+      'foreground': scheme.onSurface.toARGB32(),
+    });
+  }
+
+  void _handleBarMessage(String method, Object? arguments) {
+    final args = (arguments as Map?) ?? const {};
+    switch (method) {
+      case 'textChanged':
+        debugPrint('typing: ${args['text']}');
+        break;
+      case 'send':
+        debugPrint('send: ${args['text']}');
+        _bar.invoke('setText', {'text': ''});
+        break;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Chat')),
+      body: Column(
+        children: [
+          Expanded(
+            child: CupertinoInteractiveKeyboard(
+              child: ListView.builder(
+                itemCount: 100,
+                itemBuilder: (_, index) => ListTile(title: Text('Item #$index')),
+              ),
+            ),
+          ),
+          CupertinoHostedInputAccessory(
+            entrypoint: 'accessoryMain',
+            libraryURI: 'package:my_app/accessory_composer.dart',
+            controller: _bar,
+          ),
+        ],
+      ),
+    );
+  }
+}
+```
+
+That is the whole integration: `entrypoint` and `libraryURI` point the plugin at your composer,
+and one controller carries everything else.
+
+## The message bridge
+
+The two isolates talk through a generic two-way bridge; the plugin does not know or care what you
+send.
+
+| Direction | Main isolate | Accessory isolate |
+|---|---|---|
+| main → bar | `controller.invoke(method, [arguments])` | `controller.onInvoke = (method, arguments) { ... }` |
+| bar → main | `controller.onInvoke = (method, arguments) { ... }` | `controller.invoke(method, [arguments])` |
+| bar is ready | `controller.onReady = () { ... }` | sent automatically |
+
+Messages sent from the main isolate before the bar is ready are queued by the native side and
+delivered once it is, so `onReady` is only needed for data that depends on layout or theme.
+
+## The classic Flutter accessory
+
+For simple composables you can keep everything in the app's own Flutter view — no second engine,
+no entrypoint. The bar can trail the keyboard by a frame during interactive dismissal, which is
+usually invisible for a passive bar.
+
+```dart
+Column(
+  children: [
+    Expanded(
+      child: CupertinoInteractiveKeyboard(
+        child: ListView.builder(...),
+      ),
+    ),
+    CupertinoInputAccessory(
+      child: Material(...your bar...),
+    ),
+  ],
+)
+```
+
+## API reference
+
+### Main isolate
+
+- `CupertinoHostedInputAccessory({required String entrypoint, required String libraryURI, double height = 56, CupertinoHostedInputAccessoryController? controller})`
+  reserves the bar's height in the layout and hosts the accessory UI.
+- `CupertinoHostedInputAccessoryController`
+  - `void invoke(String method, [Object? arguments])` — send to the bar.
+  - `void Function(String method, Object? arguments)? onInvoke` — receive from the bar.
+  - `VoidCallback? onReady` — the bar installed its handler.
+- `CupertinoInteractiveKeyboard({required Widget child})` — the area where the interactive
+  keyboard dismissal is enabled; put your scrollable inside.
+- `CupertinoInputAccessory({required Widget child})` — the classic in-app bar.
+
+### Accessory isolate
+
+- `runCupertinoAccessory(CupertinoAccessoryBuilder builder)` — run the bar; the builder gets a
+  `CupertinoAccessoryController`.
+- `CupertinoAccessoryController`
+  - `void invoke(String method, [Object? arguments])` — send to the app.
+  - `void Function(String method, Object? arguments)? onInvoke` — receive from the app.
+
+### Notes
+
+- The accessory entrypoint must be a top-level function annotated with
+  `@pragma('vm:entry-point')`.
+- The bar's height is fixed by the main-isolate widget (default 56, bottom safe area added by the
+  plugin). Make your bar fill the height it is given.
+- The bar runs in a second isolate: it cannot use the main isolate's widget instances or theme;
+  send what it needs through the bridge (as the theme example does).
+
+## Example app
+
+The `example/` project is a runnable gallery. Routes:
+
+- `/hosted_accessory` — the hosted Flutter composer on a chat-like screen (recommended path).
+- `/input_accessory` — the classic in-app Flutter accessory.
+- `/simple_scroll_view` — minimal interactive keyboard.
+- `/reversed_scroll_view` — reversed list + cover-based keyboard.
+- `/nested_navigation` — nested navigation with the keyboard.
+
+## License
+
+MIT — see `LICENSE`.

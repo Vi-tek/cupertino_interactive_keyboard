@@ -8,17 +8,21 @@ class MockCupertinoInteractiveKeyboard
   final scrollableRects = <int, Rect>{};
   final inputAccessoryHeights = <int, double>{};
 
-  /// Configs passed to [createHostedAccessory], in call order.
-  final hostedAccessoryCreateConfigs = <Map<String, Object?>>[];
+  /// Arguments passed to [createHostedAccessory], in call order.
+  final hostedAccessoryCreateCalls = <Map<String, Object?>>[];
 
-  /// Configs passed to [updateHostedAccessory], in call order.
-  final hostedAccessoryUpdateConfigs = <Map<String, Object?>>[];
+  /// Heights passed to [updateHostedAccessoryHeight], in call order.
+  final hostedAccessoryHeights = <double>[];
 
-  /// Texts passed to [setHostedAccessoryText], in call order.
-  final hostedAccessoryTexts = <String>[];
+  /// Calls passed to [invokeHostedAccessory], in call order.
+  final hostedAccessoryInvokes = <Map<String, Object?>>[];
 
   /// Number of [removeHostedAccessory] calls.
   int removeHostedAccessoryCalls = 0;
+
+  /// The total height returned by [createHostedAccessory]; null keeps the
+  /// widget on its placeholder height until a height event arrives.
+  double? createResultHeight;
 
   final _hostedAccessoryEvents =
       StreamController<Map<String, Object?>>.broadcast();
@@ -33,21 +37,28 @@ class MockCupertinoInteractiveKeyboard
       _hostedAccessoryEvents.stream;
 
   @override
-  Future<double?> createHostedAccessory(Map<String, Object?> config) {
-    hostedAccessoryCreateConfigs.add(config);
-    // Null: the widget keeps its placeholder height until a height event.
+  Future<double?> createHostedAccessory({
+    required String entrypoint,
+    required String libraryURI,
+    required double height,
+  }) {
+    hostedAccessoryCreateCalls.add({
+      'entrypoint': entrypoint,
+      'libraryURI': libraryURI,
+      'height': height,
+    });
+    return Future.value(createResultHeight);
+  }
+
+  @override
+  Future<void> updateHostedAccessoryHeight(double height) {
+    hostedAccessoryHeights.add(height);
     return Future.value();
   }
 
   @override
-  Future<void> updateHostedAccessory(Map<String, Object?> config) {
-    hostedAccessoryUpdateConfigs.add(config);
-    return Future.value();
-  }
-
-  @override
-  Future<void> setHostedAccessoryText(String text) {
-    hostedAccessoryTexts.add(text);
+  Future<void> invokeHostedAccessory(String method, Object? arguments) {
+    hostedAccessoryInvokes.add({'method': method, 'arguments': arguments});
     return Future.value();
   }
 

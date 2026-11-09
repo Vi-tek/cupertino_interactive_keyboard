@@ -22,12 +22,14 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
   let inputView = CIKInputAccessoryView()
   private var channel: FlutterMethodChannel?
   private var hostedAccessoryBar: CIKHostedAccessoryBar?
-  /// The latest config pushed by Dart, forwarded to the accessory engine.
-  private var accessoryConfig: [String: Any] = [:]
   private var accessoryChannel: FlutterMethodChannel?
   private var accessoryEngine: FlutterEngine?
   private var accessoryViewController: FlutterViewController?
   private var engineGroup: FlutterEngineGroup?
+  /// Whether the accessory app installed its channel handler and can receive messages.
+  private var accessoryReady = false
+  /// Messages sent to the accessory before it was ready, flushed in order on `ready`.
+  private var pendingAccessoryInvocations: [[String: Any]] = []
     
   override init() {
     super.init()
@@ -122,43 +124,41 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
       }
       
     case "createHostedAccessory":
+      guard let config = NativeAccessoryConfig(arguments: call.arguments) else {
+        return result(FlutterMethodNotImplemented)
+      }
+      
+      DispatchQueue.main.async {
+        self.createHostedAccessory(config, result: result)
+      }
+      
+    case "updateHostedAccessoryHeight":
       guard
-        let config = NativeAccessoryConfig(arguments: call.arguments),
-        let arguments = call.arguments as? [String: Any]
+        let args = call.arguments as? [String: Any],
+        let height = args["height"] as? NSNumber
       else {
         return result(FlutterMethodNotImplemented)
       }
       
       DispatchQueue.main.async {
-        self.createHostedAccessory(config, arguments: arguments, result: result)
-      }
-      
-    case "updateHostedAccessory":
-      guard
-        let config = NativeAccessoryConfig(arguments: call.arguments),
-        let arguments = call.arguments as? [String: Any]
-      else {
-        return result(FlutterMethodNotImplemented)
-      }
-      
-      DispatchQueue.main.async {
-        self.accessoryConfig.merge(arguments) { _, new in new }
-        // The widget may change its height; the bar has to keep the height the widget reserves.
-        self.hostedAccessoryBar?.apply(height: config.height)
-        self.pushAccessoryConfig()
+        self.hostedAccessoryBar?.apply(height: CGFloat(height.doubleValue))
         result(nil)
       }
       
-    case "setHostedAccessoryText":
+    case "invokeHostedAccessory":
       guard
         let args = call.arguments as? [String: Any],
-        let text = args["text"] as? String
+        let method = args["method"] as? String
       else {
         return result(FlutterMethodNotImplemented)
       }
+      let message: [String: Any] = [
+        "method": method,
+        "arguments": args["arguments"] ?? NSNull(),
+      ]
       
       DispatchQueue.main.async {
-        self.accessoryChannel?.invokeMethod("setText", arguments: ["text": text])
+        self.invokeHostedAccessory(message)
         result(nil)
       }
       
@@ -174,13 +174,12 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
   }
   
   /// Creates the hosted accessory bar: a container glued to the keyboard layout guide, with a
-  /// second Flutter engine rendering the composer inside it.
+  /// second Flutter engine rendering the app's accessory entrypoint inside it.
   ///
   /// `keyboardLayoutGuide` is iOS 15+, while the plugin's floor is iOS 13: on older systems the
   /// method returns nil and the Flutter widget keeps its own placeholder.
   private func createHostedAccessory(
     _ config: NativeAccessoryConfig,
-    arguments: [String: Any],
     result: @escaping FlutterResult
   ) {
     guard #available(iOS 15.0, *) else {
@@ -196,12 +195,11 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     KeyboardManager.shared.flutterViewController = flutterViewController
     
     tearDownHostedAccessory()
-    accessoryConfig = arguments
     
     let bar = CIKHostedAccessoryBar(config: config)
     // The hosted Flutter view is opaque black until its first frame; painting the bar with the
-    // configured background keeps that flash invisible.
-    bar.backgroundColor = config.backgroundColor ?? .systemBackground
+    // system background keeps that flash invisible.
+    bar.backgroundColor = .systemBackground
     let flutterView = flutterViewController.view!
     flutterView.addSubview(bar)
     NSLayoutConstraint.activate([
@@ -225,9 +223,8 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
       ?? FlutterEngineGroup(name: "cupertino_interactive_keyboard.accessory", project: project)
     engineGroup = group
     let engine = group.makeEngine(
-      withEntrypoint: config.accessoryEntrypoint ?? "cupertinoAccessoryMain",
-      libraryURI: config.accessoryLibraryURI
-        ?? "package:cupertino_interactive_keyboard/cupertino_accessory_entrypoint.dart"
+      withEntrypoint: config.entrypoint,
+      libraryURI: config.libraryURI
     )
     
     let accessoryViewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
@@ -236,7 +233,7 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     accessoryViewController.didMove(toParent: flutterViewController)
     
     // The accessory engine renders the bar and answers with `ready` once its handler is installed;
-    // only then does it get the config it draws from.
+    // messages sent before that are queued and flushed then.
     let accessoryChannel = FlutterMethodChannel(
       name: "cupertino_interactive_keyboard/accessory",
       binaryMessenger: engine.binaryMessenger
@@ -258,23 +255,31 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
   
   /// Handles the calls of the accessory engine.
   ///
-  /// The accessory app only reports what the user did in the bar; the plugin forwards it to the
-  /// main engine, which owns the app's state.
+  /// The accessory app only signals that it is ready and forwards the messages it sends; the
+  /// plugin hands both to the main engine, which owns the app's state.
   private func handleAccessoryCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     let arguments = call.arguments as? [String: Any] ?? [:]
     
     switch call.method {
     case "ready":
-      pushAccessoryConfig()
-    case "textChanged":
+      accessoryReady = true
+      // The main isolate can invoke before the accessory app exists; deliver those now, in order.
+      let pending = pendingAccessoryInvocations
+      pendingAccessoryInvocations = []
+      for message in pending {
+        accessoryChannel?.invokeMethod("invoke", arguments: message)
+      }
+      channel?.invokeMethod("hostedAccessoryReady", arguments: [String: Any]())
+    case "invoke":
+      guard let method = arguments["method"] as? String else {
+        return result(FlutterMethodNotImplemented)
+      }
       channel?.invokeMethod(
-        "hostedAccessoryTextChanged",
-        arguments: ["text": arguments["text"] as? String ?? ""]
-      )
-    case "send":
-      channel?.invokeMethod(
-        "hostedAccessorySend",
-        arguments: ["text": arguments["text"] as? String ?? ""]
+        "hostedAccessoryInvoke",
+        arguments: [
+          "method": method,
+          "arguments": arguments["arguments"] ?? NSNull(),
+        ]
       )
     default:
       return result(FlutterMethodNotImplemented)
@@ -283,9 +288,14 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     result(nil)
   }
   
-  /// Pushes the latest config to the accessory engine, which redraws the bar from it.
-  private func pushAccessoryConfig() {
-    accessoryChannel?.invokeMethod("config", arguments: accessoryConfig)
+  /// Sends a message to the accessory app, queueing it until the app reported `ready`.
+  private func invokeHostedAccessory(_ message: [String: Any]) {
+    guard accessoryReady else {
+      pendingAccessoryInvocations.append(message)
+      return
+    }
+    
+    accessoryChannel?.invokeMethod("invoke", arguments: message)
   }
   
   /// Removes the bar and destroys the engine that rendered it.
@@ -300,7 +310,8 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     accessoryEngine = nil
     hostedAccessoryBar?.removeFromSuperview()
     hostedAccessoryBar = nil
-    accessoryConfig = [:]
+    accessoryReady = false
+    pendingAccessoryInvocations = []
     KeyboardManager.shared.hostedAccessoryBar = nil
   }
   

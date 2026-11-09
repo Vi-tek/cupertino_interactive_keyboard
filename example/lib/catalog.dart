@@ -6,9 +6,7 @@ class Catalog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Cupertino Interactive Keyboard"),
-      ),
+      appBar: AppBar(title: const Text("Cupertino Interactive Keyboard")),
       body: ListView(
         children: [
           ListTile(
@@ -19,6 +17,11 @@ class Catalog extends StatelessWidget {
           ListTile(
             title: const Text("Input Accessory"),
             onTap: () => Navigator.pushNamed(context, "/input_accessory"),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            title: const Text("Hosted Accessory Chat"),
+            onTap: () => Navigator.pushNamed(context, "/hosted_accessory"),
           ),
           const Divider(height: 1),
           ListTile(

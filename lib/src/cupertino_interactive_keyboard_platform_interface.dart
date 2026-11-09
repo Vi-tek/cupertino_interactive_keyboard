@@ -51,21 +51,31 @@ abstract class CupertinoInteractiveKeyboardPlatform extends PlatformInterface {
     );
   }
 
-  Future<double?> createHostedAccessory(Map<String, Object?> config) {
+  /// Creates the hosted accessory running [entrypoint] from [libraryURI].
+  ///
+  /// Returns the total bar height, including the bottom safe area, or null on
+  /// platforms that cannot host one.
+  Future<double?> createHostedAccessory({
+    required String entrypoint,
+    required String libraryURI,
+    required double height,
+  }) {
     throw UnimplementedError(
       'createHostedAccessory() has not been implemented.',
     );
   }
 
-  Future<void> updateHostedAccessory(Map<String, Object?> config) {
+  /// Changes the requested bar height, without the bottom safe area.
+  Future<void> updateHostedAccessoryHeight(double height) {
     throw UnimplementedError(
-      'updateHostedAccessory() has not been implemented.',
+      'updateHostedAccessoryHeight() has not been implemented.',
     );
   }
 
-  Future<void> setHostedAccessoryText(String text) {
+  /// Invokes [method] with [arguments] in the accessory isolate.
+  Future<void> invokeHostedAccessory(String method, Object? arguments) {
     throw UnimplementedError(
-      'setHostedAccessoryText() has not been implemented.',
+      'invokeHostedAccessory() has not been implemented.',
     );
   }
 

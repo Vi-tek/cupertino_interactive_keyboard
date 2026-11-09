@@ -1,52 +1,29 @@
 import UIKit
 
-/// The configuration of the hosted accessory bar as it arrives over the method channel.
-///
-/// Every field is optional: `createHostedAccessory` sends the full map and
-/// `updateHostedAccessory` sends any subset, so a missing field keeps the current value (and, on
-/// creation, the platform default). The bar itself only needs `height` and the entrypoint fields;
-/// everything else is forwarded verbatim to the accessory Flutter engine, which renders the bar.
+/// The arguments of `createHostedAccessory`: which Dart entrypoint renders the bar and how tall
+/// its Flutter content is. The plugin ships no bar content and no UI configuration of its own, so
+/// the app owns everything the bar draws.
 struct NativeAccessoryConfig {
-  var placeholder: String?
-  var text: String?
-  var icon: String?
-  var backgroundColor: UIColor?
-  var textColor: UIColor?
-  var placeholderColor: UIColor?
-  var iconColor: UIColor?
+  /// The Dart entrypoint of the app's accessory library.
+  let entrypoint: String
+  /// The library URI that declares the entrypoint.
+  let libraryURI: String
   /// The height of the bar's Flutter content, bottom safe area excluded.
-  var height: CGFloat?
-  /// The Dart entrypoint of the accessory app, when the app ships its own.
-  var accessoryEntrypoint: String?
-  /// The Dart library URI of the accessory entrypoint, when the app ships its own.
-  var accessoryLibraryURI: String?
+  let height: CGFloat
 
   init?(arguments: Any?) {
-    guard let arguments = arguments as? [String: Any] else { return nil }
+    guard
+      let arguments = arguments as? [String: Any],
+      let entrypoint = arguments["entrypoint"] as? String,
+      let libraryURI = arguments["libraryURI"] as? String,
+      let height = arguments["height"] as? NSNumber
+    else {
+      return nil
+    }
 
-    placeholder = arguments["placeholder"] as? String
-    text = arguments["text"] as? String
-    icon = arguments["icon"] as? String
-    backgroundColor = NativeAccessoryConfig.color(arguments["backgroundColor"])
-    textColor = NativeAccessoryConfig.color(arguments["textColor"])
-    placeholderColor = NativeAccessoryConfig.color(arguments["placeholderColor"])
-    iconColor = NativeAccessoryConfig.color(arguments["iconColor"])
-    height = (arguments["height"] as? NSNumber).map { CGFloat($0.doubleValue) }
-    accessoryEntrypoint = arguments["accessoryEntrypoint"] as? String
-    accessoryLibraryURI = arguments["accessoryLibraryURI"] as? String
-  }
-
-  /// Parses an ARGB integer (`0xAARRGGBB`) into a color.
-  private static func color(_ value: Any?) -> UIColor? {
-    guard let number = value as? NSNumber else { return nil }
-
-    let argb = UInt32(truncatingIfNeeded: number.int64Value)
-    return UIColor(
-      red: CGFloat((argb >> 16) & 0xFF) / 255,
-      green: CGFloat((argb >> 8) & 0xFF) / 255,
-      blue: CGFloat(argb & 0xFF) / 255,
-      alpha: CGFloat((argb >> 24) & 0xFF) / 255
-    )
+    self.entrypoint = entrypoint
+    self.libraryURI = libraryURI
+    self.height = CGFloat(height.doubleValue)
   }
 }
 
@@ -55,7 +32,7 @@ struct NativeAccessoryConfig {
 /// The plugin pins the bar to the Flutter view's `keyboardLayoutGuide`, so UIKit moves it with the
 /// keyboard frame for frame and keeps it at the bottom of the screen while the keyboard is closed.
 /// The bar only sizes the Flutter content it hosts: a second Flutter engine's view fills its
-/// bounds, so the composer the user sees is drawn by Flutter while its position comes from UIKit.
+/// bounds, so the app's widget is drawn by Flutter while its position comes from UIKit.
 class CIKHostedAccessoryBar: UIView {
   /// Called with the bar's total height whenever it changes, safe area included.
   var onHeightChange: ((CGFloat) -> Void)?
@@ -74,7 +51,7 @@ class CIKHostedAccessoryBar: UIView {
   init(config: NativeAccessoryConfig) {
     // The second engine reports its own size only after its first frame, so the bar is sized from
     // the fixed content height it was configured with instead.
-    contentHeight = config.height ?? 56
+    contentHeight = config.height
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
     heightConstraint.constant = contentHeight
@@ -86,9 +63,7 @@ class CIKHostedAccessoryBar: UIView {
   }
 
   /// Resizes the bar when the Flutter widget changes its content height.
-  func apply(height: CGFloat?) {
-    guard let height else { return }
-
+  func apply(height: CGFloat) {
     contentHeight = height
     updateHeightIfNeeded()
   }

@@ -8,6 +8,12 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-09-hosted-flutter-keyboard-accessory-design.md`
 
+> **Final API note:** this plan was implemented and then generalized: the plugin now ships no
+> built-in composer and no UI configuration. `CupertinoHostedInputAccessory` takes only
+> `entrypoint` + `libraryURI` (+ optional `height` and controller), and a generic `invoke` /
+> `onInvoke` / `onReady` bridge carries every message between the app and the bar. The design doc
+> is the authority for the shipped API.
+
 ## Global Constraints
 
 - Static verification only; no simulator/device run.

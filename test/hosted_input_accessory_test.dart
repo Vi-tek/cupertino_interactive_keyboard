@@ -15,6 +15,8 @@ void main() {
   });
 
   const bottomPadding = 34.0;
+  const entrypoint = 'customAccessoryMain';
+  const libraryURI = 'package:app/accessory.dart';
 
   /// Emits a native event and pumps the frame its listener schedules.
   Future<void> emit(WidgetTester tester, Map<String, Object?> event) async {
@@ -38,30 +40,32 @@ void main() {
     );
   }
 
+  Widget accessory({
+    double height = 48,
+    CupertinoHostedInputAccessoryController? controller,
+  }) {
+    return host(
+      CupertinoHostedInputAccessory(
+        entrypoint: entrypoint,
+        libraryURI: libraryURI,
+        height: height,
+        controller: controller,
+      ),
+    );
+  }
+
   testWidgets(
-    'pushes its full config on create and reserves the placeholder height until a height event arrives',
+    'creates with the entrypoint, library URI and height, and reserves the placeholder height until a height event arrives',
     (tester) async {
-      await tester.pumpWidget(
-        host(
-          const CupertinoHostedInputAccessory(
-            placeholder: 'Comment...',
-            icon: 'arrow.up.circle.fill',
-            height: 48,
-            accessoryEntrypoint: 'customAccessoryMain',
-            accessoryLibraryURI: 'package:app/accessory.dart',
-          ),
-        ),
-      );
+      await tester.pumpWidget(accessory());
       await tester.pump();
 
-      expect(plugin.hostedAccessoryCreateConfigs, hasLength(1));
-      final config = plugin.hostedAccessoryCreateConfigs.single;
-      expect(config['placeholder'], 'Comment...');
-      expect(config['icon'], 'arrow.up.circle.fill');
-      expect(config['text'], '');
-      expect(config['height'], 48);
-      expect(config['accessoryEntrypoint'], 'customAccessoryMain');
-      expect(config['accessoryLibraryURI'], 'package:app/accessory.dart');
+      expect(plugin.hostedAccessoryCreateCalls, hasLength(1));
+      expect(plugin.hostedAccessoryCreateCalls.single, {
+        'entrypoint': entrypoint,
+        'libraryURI': libraryURI,
+        'height': 48.0,
+      });
 
       expect(
         tester.getSize(find.byType(CupertinoHostedInputAccessory)).height,
@@ -79,65 +83,61 @@ void main() {
   );
 
   testWidgets(
-    'pushes a config update when its configuration changes, without the text or entrypoint',
+    'reserves the height returned by create',
     (tester) async {
-      Widget accessory(String placeholder) => host(
-            CupertinoHostedInputAccessory(placeholder: placeholder),
-          );
+      plugin.createResultHeight = 97;
 
-      await tester.pumpWidget(accessory('Comment...'));
+      await tester.pumpWidget(accessory());
       await tester.pump();
 
-      expect(plugin.hostedAccessoryUpdateConfigs, isEmpty);
-
-      await tester.pumpWidget(accessory('Reply...'));
-      await tester.pump();
-
-      expect(plugin.hostedAccessoryUpdateConfigs, hasLength(1));
-      final update = plugin.hostedAccessoryUpdateConfigs.single;
-      expect(update['placeholder'], 'Reply...');
-      // Re-sending the text would wipe what the user typed in the bar.
-      expect(update.containsKey('text'), isFalse);
-      expect(update.containsKey('accessoryEntrypoint'), isFalse);
-      expect(update.containsKey('accessoryLibraryURI'), isFalse);
+      expect(
+        tester.getSize(find.byType(CupertinoHostedInputAccessory)).height,
+        97,
+      );
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
 
   testWidgets(
-    'reports text changes, send, and controller writes to the hosted bar',
+    'routes ready and invoke to the controller and forwards controller calls',
     (tester) async {
       final controller = CupertinoHostedInputAccessoryController();
-      String? changed;
-      String? sent;
+      var readyCalls = 0;
+      String? invokedMethod;
+      Object? invokedArguments;
+      controller.onReady = () => readyCalls++;
+      controller.onInvoke = (method, arguments) {
+        invokedMethod = method;
+        invokedArguments = arguments;
+      };
 
-      await tester.pumpWidget(
-        host(
-          CupertinoHostedInputAccessory(
-            placeholder: 'Comment...',
-            controller: controller,
-            onChanged: (text) => changed = text,
-            onSend: (text) => sent = text,
-          ),
-        ),
-      );
+      await tester.pumpWidget(accessory(controller: controller));
       await tester.pump();
 
-      await emit(tester, {'type': 'textChanged', 'text': 'hello'});
+      expect(readyCalls, 0);
 
-      expect(changed, 'hello');
-      expect(controller.text, 'hello');
-      // Echoing the text back from Dart would fight the bar's field.
-      expect(plugin.hostedAccessoryTexts, isEmpty);
+      await emit(tester, {'type': 'ready'});
+      expect(readyCalls, 1);
 
-      await emit(tester, {'type': 'send', 'text': 'hello'});
+      await emit(tester, {
+        'type': 'invoke',
+        'method': 'theme',
+        'arguments': {'surface': 1},
+      });
+      expect(invokedMethod, 'theme');
+      expect(invokedArguments, {'surface': 1});
 
-      expect(sent, 'hello');
+      controller.invoke('setText', {'text': ''});
+      controller.invoke('ping');
+      await tester.pump();
 
-      controller.clear();
-
-      expect(controller.text, '');
-      expect(plugin.hostedAccessoryTexts, ['']);
+      expect(plugin.hostedAccessoryInvokes, [
+        {
+          'method': 'setText',
+          'arguments': {'text': ''},
+        },
+        {'method': 'ping', 'arguments': null},
+      ]);
 
       await tester.pumpWidget(const SizedBox.shrink());
 
@@ -147,22 +147,46 @@ void main() {
   );
 
   testWidgets(
+    'updates the native height and reserves the new requested height until it reports back',
+    (tester) async {
+      await tester.pumpWidget(accessory());
+      await tester.pump();
+
+      expect(plugin.hostedAccessoryCreateCalls, hasLength(1));
+
+      await tester.pumpWidget(accessory(height: 72));
+      await tester.pump();
+
+      expect(plugin.hostedAccessoryHeights, [72.0]);
+      expect(plugin.hostedAccessoryCreateCalls, hasLength(1));
+      expect(
+        tester.getSize(find.byType(CupertinoHostedInputAccessory)).height,
+        72 + bottomPadding,
+      );
+
+      await emit(tester, {'type': 'height', 'height': 106.0});
+
+      expect(
+        tester.getSize(find.byType(CupertinoHostedInputAccessory)).height,
+        106,
+      );
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
     'renders nothing and calls nothing on non-iOS platforms',
     (tester) async {
-      await tester.pumpWidget(
-        host(
-          const CupertinoHostedInputAccessory(placeholder: 'Comment...'),
-        ),
-      );
+      await tester.pumpWidget(accessory());
       await tester.pump();
 
       expect(
         tester.getSize(find.byType(CupertinoHostedInputAccessory)).height,
         0,
       );
-      expect(plugin.hostedAccessoryCreateConfigs, isEmpty);
-      expect(plugin.hostedAccessoryUpdateConfigs, isEmpty);
-      expect(plugin.hostedAccessoryTexts, isEmpty);
+      expect(plugin.hostedAccessoryCreateCalls, isEmpty);
+      expect(plugin.hostedAccessoryHeights, isEmpty);
+      expect(plugin.hostedAccessoryInvokes, isEmpty);
 
       await tester.pumpWidget(const SizedBox.shrink());
 
@@ -185,22 +209,37 @@ void main() {
       addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
       expect(
-        await implementation.createHostedAccessory({'height': 56.0}),
+        await implementation.createHostedAccessory(
+          entrypoint: entrypoint,
+          libraryURI: libraryURI,
+          height: 56,
+        ),
         96,
       );
-      await implementation.updateHostedAccessory({'placeholder': 'y'});
-      await implementation.setHostedAccessoryText('hi');
+      await implementation.updateHostedAccessoryHeight(64);
+      await implementation.invokeHostedAccessory('theme', {'surface': 1});
+      await implementation.invokeHostedAccessory('ping', null);
       await implementation.removeHostedAccessory();
 
       expect(calls.map((call) => call.method), [
         'createHostedAccessory',
-        'updateHostedAccessory',
-        'setHostedAccessoryText',
+        'updateHostedAccessoryHeight',
+        'invokeHostedAccessory',
+        'invokeHostedAccessory',
         'removeHostedAccessory',
       ]);
-      expect(calls[0].arguments, {'height': 56.0});
-      expect(calls[2].arguments, {'text': 'hi'});
-      expect(calls[3].arguments, isNull);
+      expect(calls[0].arguments, {
+        'entrypoint': entrypoint,
+        'libraryURI': libraryURI,
+        'height': 56.0,
+      });
+      expect(calls[1].arguments, {'height': 64.0});
+      expect(calls[2].arguments, {
+        'method': 'theme',
+        'arguments': {'surface': 1},
+      });
+      expect(calls[3].arguments, {'method': 'ping', 'arguments': null});
+      expect(calls[4].arguments, isNull);
     },
   );
 
@@ -212,10 +251,7 @@ void main() {
         implementation.hostedAccessoryEvents.listen(events.add);
     addTearDown(subscription.cancel);
 
-    Future<void> nativeCall(
-      String method,
-      Map<String, Object?> arguments,
-    ) async {
+    Future<void> nativeCall(String method, Object? arguments) async {
       await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
         'cupertino_interactive_keyboard',
         const StandardMethodCodec().encodeMethodCall(
@@ -226,13 +262,25 @@ void main() {
     }
 
     await nativeCall('hostedAccessoryHeight', {'height': 96.0});
-    await nativeCall('hostedAccessoryTextChanged', {'text': 'hi'});
-    await nativeCall('hostedAccessorySend', {'text': 'hi'});
+    await nativeCall('hostedAccessoryReady', null);
+    await nativeCall('hostedAccessoryInvoke', {
+      'method': 'textChanged',
+      'arguments': {'text': 'hi'},
+    });
+    await nativeCall('hostedAccessoryInvoke', {
+      'method': 'ping',
+      'arguments': null,
+    });
 
     expect(events, [
       {'type': 'height', 'height': 96.0},
-      {'type': 'textChanged', 'text': 'hi'},
-      {'type': 'send', 'text': 'hi'},
+      {'type': 'ready'},
+      {
+        'type': 'invoke',
+        'method': 'textChanged',
+        'arguments': {'text': 'hi'},
+      },
+      {'type': 'invoke', 'method': 'ping', 'arguments': null},
     ]);
   });
 }
