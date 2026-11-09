@@ -10,6 +10,11 @@ class KeyboardManager {
 
   weak var flutterViewController: FlutterViewController?
 
+  /// The hosted accessory bar, when the Dart side uses one. It becomes the live band: its bottom
+  /// edge is the keyboard's top edge while the keyboard is open and the view's bottom edge while it
+  /// is closed, so the same inset formula keeps the content glued to it either way.
+  weak var hostedAccessoryBar: CIKHostedAccessoryBar?
+
   private var interactiveTrackingDisplayLink: CADisplayLink?
   private var isInsetSyncScheduled = false
   private var lastReportedInset: CGFloat?
@@ -107,7 +112,23 @@ class KeyboardManager {
   ///
   /// Called when the dismissal gesture begins, so tracking starts before the keyboard moves.
   func startTrackingIfKeyboardVisible() {
-    guard activeInputAccessoryViews.contains(where: { $0.window != nil }) else { return }
+    if activeInputAccessoryViews.contains(where: { $0.window != nil }) {
+      startInteractiveTracking()
+      return
+    }
+
+    // The hosted bar is on screen whenever the plugin is used, so it only marks a visible keyboard
+    // once its bottom edge has left the Flutter view's bottom edge.
+    guard
+      let hostedAccessoryBar,
+      hostedAccessoryBar.window != nil,
+      let flutterView = flutterViewController?.view,
+      flutterView.window != nil,
+      flutterView.bounds.maxY - hostedAccessoryBar.convert(hostedAccessoryBar.bounds, to: flutterView).maxY > 1
+    else {
+      return
+    }
+
     startInteractiveTracking()
   }
 
@@ -209,8 +230,14 @@ class KeyboardManager {
     guard
       let flutterViewController,
       let flutterView = flutterViewController.view,
-      flutterView.window != nil,
-      let accessoryView = activeInputAccessoryViews.first(where: { $0.window != nil }),
+      flutterView.window != nil
+    else {
+      return nil
+    }
+
+    let hostedBar = hostedAccessoryBar.flatMap { $0.window != nil ? $0 : nil }
+    guard
+      let accessoryView = hostedBar ?? activeInputAccessoryViews.first(where: { $0.window != nil }),
       let window = accessoryView.window
     else {
       return nil
@@ -220,8 +247,12 @@ class KeyboardManager {
     let bandRect = liveScreenRect(of: accessoryView, in: screen)
     let viewRect = liveScreenRect(of: flutterView, in: screen)
 
-    // A floating keyboard has no inset in the engine, so it must not be driven here either.
-    guard KeyboardGeometry.isDockedBand(bandWidth: bandRect.width, viewWidth: viewRect.width) else {
+    // A floating keyboard has no inset in the engine, so it must not be driven here either. The
+    // hosted bar spans the Flutter view by construction, so the guard only applies to the Flutter
+    // accessory view, which UIKit can put in a floating keyboard.
+    if hostedBar == nil,
+      !KeyboardGeometry.isDockedBand(bandWidth: bandRect.width, viewWidth: viewRect.width)
+    {
       return nil
     }
 

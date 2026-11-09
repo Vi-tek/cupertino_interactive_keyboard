@@ -1,4 +1,5 @@
 import 'package:flutter_application_1/catalog.dart';
+import 'package:flutter_application_1/hosted_accessory.dart';
 import 'package:flutter_application_1/input_accessory.dart';
 import 'package:flutter_application_1/nested_navigation.dart';
 import 'package:flutter_application_1/reversed_scroll_view.dart';
@@ -19,6 +20,7 @@ class MyApp extends StatelessWidget {
         "/": (context) => const Catalog(),
         "/simple_scroll_view": (context) => const SimpleScrollView(),
         "/input_accessory": (context) => const InputAccessory(),
+        "/hosted_accessory": (context) => const HostedAccessory(),
         "/nested_navigation": (context) => const NestedNavigation(),
         "/reversed_scroll_view": (context) => const ReversedScrollView(),
       },

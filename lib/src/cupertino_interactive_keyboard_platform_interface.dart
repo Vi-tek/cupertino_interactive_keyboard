@@ -50,4 +50,31 @@ abstract class CupertinoInteractiveKeyboardPlatform extends PlatformInterface {
       'removeInputAccessoryHeight() has not been implemented.',
     );
   }
+
+  Future<double?> createHostedAccessory(Map<String, Object?> config) {
+    throw UnimplementedError(
+      'createHostedAccessory() has not been implemented.',
+    );
+  }
+
+  Future<void> updateHostedAccessory(Map<String, Object?> config) {
+    throw UnimplementedError(
+      'updateHostedAccessory() has not been implemented.',
+    );
+  }
+
+  Future<void> setHostedAccessoryText(String text) {
+    throw UnimplementedError(
+      'setHostedAccessoryText() has not been implemented.',
+    );
+  }
+
+  Future<void> removeHostedAccessory() {
+    throw UnimplementedError(
+      'removeHostedAccessory() has not been implemented.',
+    );
+  }
+
+  Stream<Map<String, Object?>> get hostedAccessoryEvents =>
+      const Stream.empty();
 }

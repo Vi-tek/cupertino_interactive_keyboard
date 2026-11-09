@@ -19,6 +19,24 @@ enum KeyboardGeometry {
     max(0, viewBottom - bandBottom) * scale
   }
 
+  /// The total height of the hosted accessory bar.
+  ///
+  /// The bar is a fixed-height container: the second Flutter engine renders the composer inside it
+  /// and never resizes it, so the only term that changes is the bottom safe area. It is added on
+  /// top, so the bar clears the home indicator while it sits at the bottom of the screen and loses
+  /// that padding once the keyboard covers the indicator.
+  ///
+  /// - Parameters:
+  ///   - contentHeight: The height the bar's Flutter content asked for, safe area excluded.
+  ///   - safeAreaBottom: The bottom safe area inset of the bar.
+  /// - Returns: The bar height in points.
+  static func hostedAccessoryHeight(
+    contentHeight: CGFloat,
+    safeAreaBottom: CGFloat
+  ) -> CGFloat {
+    contentHeight + safeAreaBottom
+  }
+
   /// Whether the band belongs to a docked keyboard.
   ///
   /// Floating and split keyboards carry no engine inset, so the plugin must not drive those. A

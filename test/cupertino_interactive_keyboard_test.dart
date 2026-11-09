@@ -279,5 +279,4 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.android),
   );
-
 }

@@ -81,6 +81,34 @@ expect(
   "a band narrower than the view belongs to a floating keyboard"
 )
 
+// The hosted bar is exactly the height its Flutter content asked for plus the bottom safe area.
+expect(
+  KeyboardGeometry.hostedAccessoryHeight(contentHeight: 56, safeAreaBottom: 34),
+  56 + 34,
+  "the bar is its content height plus the safe area"
+)
+
+// A taller content height makes a taller bar.
+expect(
+  KeyboardGeometry.hostedAccessoryHeight(contentHeight: 72, safeAreaBottom: 34),
+  72 + 34,
+  "a taller content height makes a taller bar"
+)
+
+// The height is fixed by the content height: nothing clamps it, however tall it is.
+expect(
+  KeyboardGeometry.hostedAccessoryHeight(contentHeight: 400, safeAreaBottom: 34),
+  400 + 34,
+  "the bar height is not clamped"
+)
+
+// The safe area disappears while the keyboard covers the home indicator, so the bar shrinks by it.
+expect(
+  KeyboardGeometry.hostedAccessoryHeight(contentHeight: 56, safeAreaBottom: 0),
+  56,
+  "the bar has no safe area while it sits on the keyboard"
+)
+
 // The tracking has to survive the release of the gesture, because the keyboard animates back
 // into place afterwards.
 expect(
