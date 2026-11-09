@@ -1,0 +1,7 @@
+Target dependency graph (3 targets)
+Target 'AllExcludingTests' in project 'Aggregate'
+➜ Explicit dependency on target 'cupertino-interactive-keyboard-product' in project 'cupertino_interactive_keyboard'
+➜ Explicit dependency on target 'cupertino_interactive_keyboard' in project 'cupertino_interactive_keyboard'
+Target 'cupertino-interactive-keyboard-product' in project 'cupertino_interactive_keyboard'
+➜ Explicit dependency on target 'cupertino_interactive_keyboard' in project 'cupertino_interactive_keyboard'
+Target 'cupertino_interactive_keyboard' in project 'cupertino_interactive_keyboard' (no dependencies)

@@ -18,7 +18,15 @@ class CIKScrollView: UIScrollView, UIGestureRecognizerDelegate {
     keyboardDismissMode = .interactiveWithAccessory
     contentSize = CGSize(width: 10, height: 10000)
     panGestureRecognizer.cancelsTouchesInView = false
+    panGestureRecognizer.addTarget(self, action: #selector(handlePanGesture(_:)))
     isHidden = true
+  }
+
+  @objc
+  private func handlePanGesture(_ gesture: UIPanGestureRecognizer) {
+    if gesture.state == .began || gesture.state == .changed {
+      KeyboardManager.shared.startTrackingIfKeyboardVisible()
+    }
   }
   
   override func didMoveToWindow() {
@@ -39,9 +47,15 @@ class CIKScrollView: UIScrollView, UIGestureRecognizerDelegate {
   
   override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
     lazy var location = gestureRecognizer.location(in: gestureRecognizer.view)
-    return gestureRecognizer == panGestureRecognizer
+    let shouldBegin = gestureRecognizer == panGestureRecognizer
     && super.gestureRecognizerShouldBegin(gestureRecognizer)
     && scrollabeRects.contains(where: { $0.value.contains(location) })
+    if shouldBegin {
+      // Start tracking before the keyboard starts moving so the accessory view does not fall
+      // behind during the first frames of the drag.
+      KeyboardManager.shared.startTrackingIfKeyboardVisible()
+    }
+    return shouldBegin
   }
   
   func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {

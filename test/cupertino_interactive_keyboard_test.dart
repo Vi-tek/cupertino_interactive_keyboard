@@ -181,4 +181,103 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
+  testWidgets(
+    'dynamically updates input accessory height when child resizes',
+    (tester) async {
+      double height = 44.0;
+      late StateSetter stateSetter;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (context, setState) {
+                stateSetter = setState;
+                return CupertinoInputAccessory(
+                  child: SizedBox(height: height),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+
+      expect(plugin.inputAccessoryHeights.length, 1);
+      expect(plugin.inputAccessoryHeights.values.first, 44.0);
+
+      stateSetter(() {
+        height = 60.0;
+      });
+      await tester.pumpAndSettle();
+
+      expect(plugin.inputAccessoryHeights.length, 1);
+      expect(plugin.inputAccessoryHeights.values.first, 60.0);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'supports multiple accessories and removes height on unmount',
+    (tester) async {
+      bool showSecond = true;
+      late StateSetter stateSetter;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (context, setState) {
+                stateSetter = setState;
+                return Column(
+                  children: [
+                    const CupertinoInputAccessory(
+                      child: SizedBox(height: 48),
+                    ),
+                    if (showSecond)
+                      const CupertinoInputAccessory(
+                        child: SizedBox(height: 72),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      );
+
+      expect(plugin.inputAccessoryHeights.length, 2);
+      expect(plugin.inputAccessoryHeights.values.toSet(), {48.0, 72.0});
+
+      stateSetter(() {
+        showSecond = false;
+      });
+      await tester.pumpAndSettle();
+
+      expect(plugin.inputAccessoryHeights.length, 1);
+      expect(plugin.inputAccessoryHeights.values.first, 48.0);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'does not register platform height or scrollable rect on non-iOS platforms',
+    (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: CupertinoInteractiveKeyboard(
+              child: CupertinoInputAccessory(
+                child: SizedBox(height: 50),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(plugin.scrollableRects, isEmpty);
+      expect(plugin.inputAccessoryHeights, isEmpty);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
 }

@@ -43,6 +43,7 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
         guard let flutterViewController = self.findFlutterViewController() else {
           return result(false)
         }
+        KeyboardManager.shared.flutterViewController = flutterViewController
         
         if self.scrollView.superview != flutterViewController.view {
           self.scrollView.removeFromSuperview()
@@ -117,6 +118,7 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
   }
   
   public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
+    KeyboardManager.shared.stopInteractiveTracking()
     scrollView.scrollabeRects = [:]
     inputView.inputAccessoryHeights = [:]
   }

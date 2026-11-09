@@ -1,0 +1,4 @@
+module cupertino_interactive_keyboard {
+header "cupertino_interactive_keyboard-Swift.h"
+export *
+}
