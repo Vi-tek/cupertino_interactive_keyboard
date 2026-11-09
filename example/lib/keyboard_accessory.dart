@@ -1,23 +1,63 @@
 import 'package:cupertino_interactive_keyboard/cupertino_interactive_keyboard.dart';
+import 'package:example/keyboard_composer.dart';
 import 'package:flutter/material.dart';
 
 /// The hosted Flutter accessory bar demo: a real chat screen in the app and a
 /// second Flutter engine drawing the composer that rides the keyboard.
-class HostedAccessory extends StatefulWidget {
-  const HostedAccessory({super.key});
+class KeyboardAccessory extends StatefulWidget {
+  const KeyboardAccessory({super.key});
 
   @override
-  State<HostedAccessory> createState() => _HostedAccessoryState();
+  State<KeyboardAccessory> createState() => _KeyboardAccessoryState();
 }
 
-class _HostedAccessoryState extends State<HostedAccessory> {
+class _KeyboardAccessoryState extends State<KeyboardAccessory> {
   final _controller = CupertinoHostedInputAccessoryController();
   final _messages = <_ChatMessage>[
     const _ChatMessage(
       'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
+      'Type a message below and tap send. The bar is a second Flutter engine '
       'pinned to the keyboard.',
       mine: false,
     ),
+    const _ChatMessage('This chat lives in the main isolate.', mine: false),
+    const _ChatMessage('This chat lives in the main isolate.', mine: false),
+    const _ChatMessage('This chat lives in the main isolate.', mine: false),
+    const _ChatMessage('This chat lives in the main isolate.', mine: false),
+    const _ChatMessage('This chat lives in the main isolate.', mine: false),
+    const _ChatMessage('This chat lives in the main isolate.', mine: false),
+    const _ChatMessage('This chat lives in the main isolate.', mine: false),
+    const _ChatMessage('This chat lives in the main isolate.', mine: false),
+    const _ChatMessage('This chat lives in the main isolate.', mine: false),
     const _ChatMessage('This chat lives in the main isolate.', mine: false),
   ];
 
@@ -109,9 +149,9 @@ class _HostedAccessoryState extends State<HostedAccessory> {
               ),
             ),
           ),
-          CupertinoHostedInputAccessory(
-            entrypoint: 'accessoryMain',
-            libraryURI: 'package:flutter_application_1/accessory_composer.dart',
+          CupertinoKeyboardAccessory(
+            entrypoint: accessoryEntrypoint,
+            libraryURI: accessoryLibraryURI,
             height: 64,
             controller: _controller,
           ),

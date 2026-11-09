@@ -11,11 +11,18 @@ let package = Package(
     products: [
         .library(name: "cupertino-interactive-keyboard", targets: ["cupertino_interactive_keyboard"])
     ],
-    dependencies: [],
+    dependencies: [
+        .package(name: "FlutterFramework", path: "../FlutterFramework")
+    ],
     targets: [
         .target(
             name: "cupertino_interactive_keyboard",
-            dependencies: [],
+            dependencies: [
+                .product(
+                    name: "FlutterFramework",
+                    package: "FlutterFramework"
+                )
+            ],
             resources: []
         )
     ]

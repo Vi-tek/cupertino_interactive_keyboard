@@ -202,7 +202,7 @@ calling `KeyboardManager.shared.stopInteractiveTracking()`.
 - [x] **Step 8: Verify the plugin compiles for iOS**
 
 Run: `flutter build ios --no-codesign --simulator` (from the repository root; the example app lives
-in `flutter_application_1/`, build from there if the root has no iOS project).
+in `example/`, build from there if the root has no iOS project).
 Expected: `✓ Built build/ios/iphonesimulator/Runner.app`.
 
 - [x] **Step 9: Commit**
@@ -257,7 +257,7 @@ Expected: `All tests passed!`.
 Run: `flutter analyze`
 Expected: no errors. Four info-level findings are pre-existing after the byte-exact restore:
 `current_route_aware.dart:11` (deprecated `TickerMode.of`), `cupertino_interactive_keyboard_method_channel.dart:13-14`
-(`async` without `await`) and `flutter_application_1/lib/reversed_scroll_view.dart:37`. Do not "fix" them in
+(`async` without `await`) and `example/lib/reversed_scroll_view.dart:37`. Do not "fix" them in
 this task.
 
 - [x] **Step 5: Commit**

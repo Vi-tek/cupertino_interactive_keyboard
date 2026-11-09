@@ -20,11 +20,6 @@ class Catalog extends StatelessWidget {
           ),
           const Divider(height: 1),
           ListTile(
-            title: const Text("Hosted Accessory Chat"),
-            onTap: () => Navigator.pushNamed(context, "/hosted_accessory"),
-          ),
-          const Divider(height: 1),
-          ListTile(
             title: const Text("Nested Navigation"),
             onTap: () => Navigator.pushNamed(context, "/nested_navigation"),
           ),

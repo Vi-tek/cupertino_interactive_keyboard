@@ -45,7 +45,7 @@ void main() {
     CupertinoHostedInputAccessoryController? controller,
   }) {
     return host(
-      CupertinoHostedInputAccessory(
+      CupertinoKeyboardAccessory(
         entrypoint: entrypoint,
         libraryURI: libraryURI,
         height: height,
@@ -68,14 +68,14 @@ void main() {
       });
 
       expect(
-        tester.getSize(find.byType(CupertinoHostedInputAccessory)).height,
+        tester.getSize(find.byType(CupertinoKeyboardAccessory)).height,
         48 + bottomPadding,
       );
 
       await emit(tester, {'type': 'height', 'height': 96.0});
 
       expect(
-        tester.getSize(find.byType(CupertinoHostedInputAccessory)).height,
+        tester.getSize(find.byType(CupertinoKeyboardAccessory)).height,
         96,
       );
     },
@@ -91,7 +91,7 @@ void main() {
       await tester.pump();
 
       expect(
-        tester.getSize(find.byType(CupertinoHostedInputAccessory)).height,
+        tester.getSize(find.byType(CupertinoKeyboardAccessory)).height,
         97,
       );
     },
@@ -160,14 +160,14 @@ void main() {
       expect(plugin.hostedAccessoryHeights, [72.0]);
       expect(plugin.hostedAccessoryCreateCalls, hasLength(1));
       expect(
-        tester.getSize(find.byType(CupertinoHostedInputAccessory)).height,
+        tester.getSize(find.byType(CupertinoKeyboardAccessory)).height,
         72 + bottomPadding,
       );
 
       await emit(tester, {'type': 'height', 'height': 106.0});
 
       expect(
-        tester.getSize(find.byType(CupertinoHostedInputAccessory)).height,
+        tester.getSize(find.byType(CupertinoKeyboardAccessory)).height,
         106,
       );
     },
@@ -181,7 +181,7 @@ void main() {
       await tester.pump();
 
       expect(
-        tester.getSize(find.byType(CupertinoHostedInputAccessory)).height,
+        tester.getSize(find.byType(CupertinoKeyboardAccessory)).height,
         0,
       );
       expect(plugin.hostedAccessoryCreateCalls, isEmpty);

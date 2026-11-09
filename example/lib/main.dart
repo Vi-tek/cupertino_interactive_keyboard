@@ -1,9 +1,8 @@
-import 'package:flutter_application_1/catalog.dart';
-import 'package:flutter_application_1/hosted_accessory.dart';
-import 'package:flutter_application_1/input_accessory.dart';
-import 'package:flutter_application_1/nested_navigation.dart';
-import 'package:flutter_application_1/reversed_scroll_view.dart';
-import 'package:flutter_application_1/simple_scroll_view.dart';
+import 'package:example/catalog.dart';
+import 'package:example/keyboard_accessory.dart';
+import 'package:example/nested_navigation.dart';
+import 'package:example/reversed_scroll_view.dart';
+import 'package:example/simple_scroll_view.dart';
 import 'package:flutter/material.dart';
 
 void main() {
@@ -19,8 +18,7 @@ class MyApp extends StatelessWidget {
       routes: {
         "/": (context) => const Catalog(),
         "/simple_scroll_view": (context) => const SimpleScrollView(),
-        "/input_accessory": (context) => const InputAccessory(),
-        "/hosted_accessory": (context) => const HostedAccessory(),
+        "/input_accessory": (context) => const KeyboardAccessory(),
         "/nested_navigation": (context) => const NestedNavigation(),
         "/reversed_scroll_view": (context) => const ReversedScrollView(),
       },

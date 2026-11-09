@@ -222,9 +222,13 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     let group = engineGroup
       ?? FlutterEngineGroup(name: "cupertino_interactive_keyboard.accessory", project: project)
     engineGroup = group
+    // The bar is a single screen, not a routed app: the engine must not inherit the app's
+    // launch route (deep link, `flutter run --route`), which its MaterialApp would then fail
+    // to navigate to.
     let engine = group.makeEngine(
       withEntrypoint: config.entrypoint,
-      libraryURI: config.libraryURI
+      libraryURI: config.libraryURI,
+      initialRoute: "/"
     )
     
     let accessoryViewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)

@@ -1,31 +1,36 @@
 import 'package:cupertino_interactive_keyboard/cupertino_interactive_keyboard.dart';
 import 'package:flutter/material.dart';
 
-/// Entrypoint of the accessory engine for this app's own composer bar.
+/// What [CupertinoKeyboardAccessory] is wired with: the entrypoint the accessory
+/// engine runs and the library that declares it.
 ///
+/// The engine looks the library up in the app's compiled kernel, so this library
+/// must be imported by something the app's entrypoint reaches. The screen does
+/// that import.
+const accessoryEntrypoint = 'accessoryMain';
+const accessoryLibraryURI = 'package:example/keyboard_composer.dart';
+
+/// Entrypoint of the accessory engine for this app's own composer bar.
 /// The plugin starts this entrypoint in a second engine and puts its view in a
 /// native container pinned to the keyboard, so this Flutter UI (TextField and
 /// all) rides the keyboard frame for frame.
 @pragma('vm:entry-point')
 void accessoryMain() {
   runCupertinoAccessory(
-    (context, controller) => AccessoryComposer(controller: controller),
+    (context, controller) => KeyboardComposer(controller: controller),
   );
 }
 
-/// The app's own Flutter composer. It knows nothing about the plugin's UI
-/// config: the main isolate sends it a theme and text, and it sends text
-/// changes and the send action back.
-class AccessoryComposer extends StatefulWidget {
-  const AccessoryComposer({super.key, required this.controller});
+class KeyboardComposer extends StatefulWidget {
+  const KeyboardComposer({super.key, required this.controller});
 
   final CupertinoAccessoryController controller;
 
   @override
-  State<AccessoryComposer> createState() => _AccessoryComposerState();
+  State<KeyboardComposer> createState() => _KeyboardComposerState();
 }
 
-class _AccessoryComposerState extends State<AccessoryComposer> {
+class _KeyboardComposerState extends State<KeyboardComposer> {
   final _field = TextEditingController();
 
   /// Colors sent by the main isolate; null until its 'theme' call arrives.

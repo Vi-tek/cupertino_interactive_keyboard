@@ -121,9 +121,16 @@ class _ComposerState extends State<Composer> {
 }
 ```
 
+> The accessory engine can only start an entrypoint that is in the app's compiled kernel, so the
+> app has to import the composer library. A library nothing imports is not compiled in and the
+> engine fails with `Dart_LookupLibrary: library 'package:my_app/accessory_composer.dart' not found`,
+> so import it from the screen that hosts the bar (or anywhere `main.dart` reaches).
+
 ### 2. Put the bar on the screen
 
 ```dart
+import 'accessory_composer.dart';
+
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
 

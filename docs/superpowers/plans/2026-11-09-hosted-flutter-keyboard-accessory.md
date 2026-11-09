@@ -17,7 +17,7 @@
 ## Global Constraints
 
 - Static verification only; no simulator/device run.
-- Scope split: **native** owns `ios/`; **Dart** owns `lib/`, `test/`, `flutter_application_1/`. Never cross. No commits.
+- Scope split: **native** owns `ios/`; **Dart** owns `lib/`, `test/`, `example/`. Never cross. No commits.
 - The rejected native implementation is already in the working tree (same files): modify it in place, do not start over.
 - iOS 15+ for the positioned container; below that `createHostedAccessory` returns nil.
 
@@ -49,7 +49,7 @@ Native pushes `config` when the accessory calls `ready` and whenever `updateHost
 - [ ] Geometry checks first (failing), then the helper; `sh ios/KeyboardGeometryTests/run.sh` passes.
 - [ ] `CIKHostedAccessoryBar`: `UIView` with a height constraint = `hostedAccessoryHeight(contentHeight: config.height, safeAreaBottom: safeAreaInsets.bottom)`; lays out a passed-in child view (the accessory VC's view) to its bounds; reports `onHeightChange` on layout/safe-area change; no UITextView/button/placeholder code remains.
 - [ ] Plugin: lazily create `FlutterEngineGroup(name:project:)` with `FlutterDartProject()`; on `createHostedAccessory` (guard `#available(iOS 15.0, *)`) create the bar, then `makeEngineWithEntrypoint(entrypoint ?? "cupertinoAccessoryMain", libraryURI ?? "package:cupertino_interactive_keyboard/cupertino_accessory_entrypoint.dart")`, `FlutterViewController(engine:)` as a child of the main FlutterViewController, add its view into the bar, store engine+VC+bar, expose the bar as `KeyboardManager.shared.hostedAccessoryBar`; set the accessory channel handler (on the accessory engine's `binaryMessenger`) for `ready`/`textChanged`/`send`; on `ready` push the current config; forward events to the main channel. `updateHostedAccessory` updates config + pushes to the accessory; `setHostedAccessoryText` pushes `setText`; `removeHostedAccessory` tears down the VC/engine/bar.
-- [ ] Verify: geometry checks pass; `cd flutter_application_1 && flutter build ios --no-codesign --simulator` builds.
+- [ ] Verify: geometry checks pass; `cd example && flutter build ios --no-codesign --simulator` builds.
 
 ### Task 2: Dart — hosted widget, accessory entrypoint, example, tests
 
@@ -58,7 +58,7 @@ Native pushes `config` when the accessory calls `ready` and whenever `updateHost
 - `lib/cupertino_accessory_entrypoint.dart` (new): `@pragma('vm:entry-point') void cupertinoAccessoryMain()` running `CupertinoAccessoryApp` — a Material app whose composer bar follows the `config` map (placeholder, initial text, icon, colors) and emits `ready`/`textChanged`/`send` on `MethodChannel('cupertino_interactive_keyboard/accessory')`; `setText` updates the controller without echoing `textChanged`.
 - `lib/cupertino_interactive_keyboard.dart`: export both new libraries.
 - Platform interface + method channel: rename to the hosted method/event names in the contract; accessory channel is NOT used from the main isolate.
-- `flutter_application_1/lib/input_accessory.dart`: use `CupertinoHostedInputAccessory` with the same config as now.
+- `example/lib/input_accessory.dart`: use `CupertinoHostedInputAccessory` with the same config as now.
 - `test/native_input_accessory_test.dart` → `test/hosted_input_accessory_test.dart` (rename + update names); `test/cupertino_accessory_entrypoint_test.dart` (new): pump `CupertinoAccessoryApp` with a mocked accessory channel, assert config renders (placeholder/colors), typing emits `textChanged`, the send button emits `send`, `setText` updates the field without emitting.
 - Update `test/mock_cupertino_interactive_keyboard.dart` to the hosted names/events.
 

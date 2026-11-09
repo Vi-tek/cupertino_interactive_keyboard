@@ -34,8 +34,8 @@ class CupertinoHostedInputAccessoryController {
 /// and routes messages. [entrypoint] and [libraryURI] identify the Dart
 /// function the accessory engine runs. On platforms other than iOS it renders
 /// nothing and calls nothing.
-class CupertinoHostedInputAccessory extends StatefulWidget {
-  const CupertinoHostedInputAccessory({
+class CupertinoKeyboardAccessory extends StatefulWidget {
+  const CupertinoKeyboardAccessory({
     super.key,
     required this.entrypoint,
     required this.libraryURI,
@@ -57,12 +57,12 @@ class CupertinoHostedInputAccessory extends StatefulWidget {
   final CupertinoHostedInputAccessoryController? controller;
 
   @override
-  State<CupertinoHostedInputAccessory> createState() =>
-      _CupertinoHostedInputAccessoryState();
+  State<CupertinoKeyboardAccessory> createState() =>
+      _CupertinoKeyboardAccessoryState();
 }
 
-class _CupertinoHostedInputAccessoryState
-    extends State<CupertinoHostedInputAccessory> {
+class _CupertinoKeyboardAccessoryState
+    extends State<CupertinoKeyboardAccessory> {
   late final CupertinoHostedInputAccessoryController _controller;
   StreamSubscription<Map<String, Object?>>? _events;
 
@@ -86,7 +86,7 @@ class _CupertinoHostedInputAccessoryState
   }
 
   @override
-  void didUpdateWidget(CupertinoHostedInputAccessory oldWidget) {
+  void didUpdateWidget(CupertinoKeyboardAccessory oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!_isIOS || widget.height == oldWidget.height) {
       return;
