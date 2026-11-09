@@ -5,12 +5,26 @@ import 'package:flutter/services.dart';
 /// An implementation of [CupertinoInteractiveKeyboardPlatform] that uses method channels.
 class MethodChannelCupertinoInteractiveKeyboard
     extends CupertinoInteractiveKeyboardPlatform {
+  MethodChannelCupertinoInteractiveKeyboard() {
+    methodChannel.setMethodCallHandler(_handleMethodCall);
+  }
+
   /// The method channel used to interact with the native platform.
   @visibleForTesting
   final methodChannel = const MethodChannel('cupertino_interactive_keyboard');
 
+  Future<void> _handleMethodCall(MethodCall call) async {
+    switch (call.method) {
+      case 'setKeyboardTranslation':
+        final args = call.arguments as Map?;
+        final translation = (args?['translation'] as num?)?.toDouble() ?? 0;
+        keyboardTranslation.value = translation;
+        break;
+    }
+  }
+
   @override
-  Future<bool?> initialize({required bool firstTime}) async {
+  Future<bool?> initialize({required bool firstTime}) {
     return methodChannel.invokeMethod<bool>('initialize', {
       'firstTime': firstTime,
     });

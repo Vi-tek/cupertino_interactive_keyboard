@@ -8,6 +8,9 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     swizzleFlutterTextInputView()
     
     let channel = FlutterMethodChannel(name: "cupertino_interactive_keyboard", binaryMessenger: registrar.messenger())
+    // The keyboard manager pushes the live keyboard offset on the channel, because only the
+    // plugin owns the channel of the engine.
+    KeyboardManager.shared.channel = channel
     let instance = CupertinoInteractiveKeyboardPlugin()
     registrar.publish(instance)
     registrar.addMethodCallDelegate(instance, channel: channel)

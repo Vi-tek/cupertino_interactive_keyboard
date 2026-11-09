@@ -24,8 +24,13 @@ class CIKScrollView: UIScrollView, UIGestureRecognizerDelegate {
 
   @objc
   private func handlePanGesture(_ gesture: UIPanGestureRecognizer) {
-    if gesture.state == .began || gesture.state == .changed {
+    switch gesture.state {
+    case .began, .changed:
+      // Start tracking before the keyboard moves so the accessory view does not fall behind
+      // during the first frames of the drag.
       KeyboardManager.shared.startTrackingIfKeyboardVisible()
+    default:
+      break
     }
   }
   

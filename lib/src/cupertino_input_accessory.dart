@@ -36,10 +36,25 @@ class _IOSCupertinoInputAccessory extends State<IOSCupertinoInputAccessory>
   double? _latestHeight;
 
   @override
+  void initState() {
+    super.initState();
+    CupertinoInteractiveKeyboardPlatform.instance.keyboardTranslation
+        .addListener(_onKeyboardTranslationChanged);
+  }
+
+  @override
   void dispose() {
+    CupertinoInteractiveKeyboardPlatform.instance.keyboardTranslation
+        .removeListener(_onKeyboardTranslationChanged);
     super.dispose();
     CupertinoInteractiveKeyboardPlatform.instance
         .removeInputAccessoryHeight(_viewId);
+  }
+
+  void _onKeyboardTranslationChanged() {
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
@@ -50,12 +65,25 @@ class _IOSCupertinoInputAccessory extends State<IOSCupertinoInputAccessory>
 
   @override
   Widget build(BuildContext context) {
+    // While the keyboard is dragged away the native side pushes how far the accessory has to be
+    // moved to stay glued to the keyboard. The accessory is moved by a transform, so the widget
+    // tree is not rebuilt and relayouted on every frame, which would drop frames and let the
+    // accessory trail behind the keyboard.
+    //
+    // The transform is applied inside the height observer, because the render object of the
+    // observer does not report the transform of its ancestors to the geometry of the tree.
+    final translation =
+        CupertinoInteractiveKeyboardPlatform.instance.keyboardTranslation.value;
+
     return HeightObserver(
       onChange: (height) {
         _latestHeight = height;
         _reportHeight();
       },
-      child: widget.child,
+      child: Transform.translate(
+        offset: Offset(0, translation),
+        child: widget.child,
+      ),
     );
   }
 
