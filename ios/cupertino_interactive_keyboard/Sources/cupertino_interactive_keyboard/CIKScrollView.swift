@@ -26,9 +26,9 @@ class CIKScrollView: UIScrollView, UIGestureRecognizerDelegate {
   private func handlePanGesture(_ gesture: UIPanGestureRecognizer) {
     switch gesture.state {
     case .began, .changed:
-      // Start tracking before the keyboard moves so the accessory view does not fall behind
-      // during the first frames of the drag.
+      // Start tracking before the keyboard moves, then push the live position on every change.
       KeyboardManager.shared.startTrackingIfKeyboardVisible()
+      KeyboardManager.shared.keyboardDragDidChange()
     default:
       break
     }
@@ -56,9 +56,10 @@ class CIKScrollView: UIScrollView, UIGestureRecognizerDelegate {
     && super.gestureRecognizerShouldBegin(gestureRecognizer)
     && scrollabeRects.contains(where: { $0.value.contains(location) })
     if shouldBegin {
-      // Start tracking before the keyboard starts moving so the accessory view does not fall
-      // behind during the first frames of the drag.
+      // Start tracking before the keyboard starts moving, then push the live position on every
+      // change.
       KeyboardManager.shared.startTrackingIfKeyboardVisible()
+      KeyboardManager.shared.keyboardDragDidChange()
     }
     return shouldBegin
   }

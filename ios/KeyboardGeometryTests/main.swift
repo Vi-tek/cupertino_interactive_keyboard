@@ -32,68 +32,53 @@ func expect(
   }
 }
 
-let screenHeight: CGFloat = 844
-let keyboardHeight: CGFloat = 336
-
-// The keyboard is fully shown, so the band sits directly above the keyboard.
-let bandBottom = screenHeight - keyboardHeight
-
+// Keyboard fully shown: the viewport has to be inset by the keyboard height.
 expect(
-  KeyboardGeometry.bandOffset(bandBottom: bandBottom, screenBottom: screenHeight),
-  keyboardHeight,
-  "the band offset is the keyboard height while the keyboard is fully shown"
+  KeyboardGeometry.inset(bandBottom: 844 - 336, viewBottom: 844, scale: 3),
+  336 * 3,
+  "the inset is the keyboard height in physical pixels while the keyboard is fully shown"
 )
 
-// Dragging the keyboard down by 40 points moves the band down by 40 points.
+// Dragged down by 40 points: the inset shrinks by 40 points.
 expect(
-  KeyboardGeometry.bandOffset(
-    bandBottom: bandBottom + 40,
-    screenBottom: screenHeight
-  ),
-  keyboardHeight - 40,
-  "dragging the keyboard down by 40 points shrinks the band offset by 40 points"
+  KeyboardGeometry.inset(bandBottom: 844 - 336 + 40, viewBottom: 844, scale: 3),
+  (336 - 40) * 3,
+  "dragging the keyboard down by 40 points shrinks the inset by 40 points"
 )
 
-// The band leaves the screen when the keyboard is dismissed.
+// A non-fullscreen Flutter view uses its own bottom, not the screen's.
 expect(
-  KeyboardGeometry.bandOffset(
-    bandBottom: screenHeight + 100,
-    screenBottom: screenHeight
-  ),
+  KeyboardGeometry.inset(bandBottom: 520, viewBottom: 600, scale: 2),
+  80 * 2,
+  "the inset is measured against the Flutter view's bottom edge"
+)
+
+// The band leaves the screen when the keyboard is dismissed: the inset clamps at zero.
+expect(
+  KeyboardGeometry.inset(bandBottom: 900, viewBottom: 844, scale: 3),
   0,
-  "the band offset never becomes negative"
+  "the inset never becomes negative"
 )
 
-// The accessory is laid out at the bottom of the content area, so it is already in the right
-// place while the viewport inset matches the band offset.
+// A docked keyboard's band spans at least the width of the Flutter view.
 expect(
-  KeyboardGeometry.accessoryTranslation(
-    viewportInset: keyboardHeight,
-    bandOffset: keyboardHeight
-  ),
-  0,
-  "the accessory does not move while the keyboard is fully shown"
+  KeyboardGeometry.isDockedBand(bandWidth: 402, viewWidth: 402),
+  true,
+  "a band as wide as the view belongs to a docked keyboard"
 )
 
-// While the keyboard is dragged the viewport inset stays at its resting value, so the accessory
-// has to be moved by the distance the keyboard travelled.
+// The keyboard spans the screen while the Flutter view can sit in a sheet.
 expect(
-  KeyboardGeometry.accessoryTranslation(
-    viewportInset: keyboardHeight,
-    bandOffset: keyboardHeight - 40
-  ),
-  40,
-  "the accessory follows the keyboard by the distance it travelled"
+  KeyboardGeometry.isDockedBand(bandWidth: 402, viewWidth: 320),
+  true,
+  "a band wider than the view belongs to a docked keyboard"
 )
 
-// The accessory is never moved up, so it cannot end up above the keyboard.
+// A floating keyboard's band is narrower than the view, so the plugin must not drive it.
 expect(
-  KeyboardGeometry.accessoryTranslation(
-    viewportInset: keyboardHeight,
-    bandOffset: keyboardHeight + 40
-  ),
-  -40,
-  "the accessory is moved up when the band is below its resting position"
+  KeyboardGeometry.isDockedBand(bandWidth: 240, viewWidth: 402),
+  false,
+  "a band narrower than the view belongs to a floating keyboard"
 )
 
 // The tracking has to survive the release of the gesture, because the keyboard animates back

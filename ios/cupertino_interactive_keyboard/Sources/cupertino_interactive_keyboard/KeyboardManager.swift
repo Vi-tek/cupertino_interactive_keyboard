@@ -10,15 +10,14 @@ class KeyboardManager {
 
   weak var flutterViewController: FlutterViewController?
 
-  /// The channel the plugin pushes the live translation of the accessory on. Only the plugin owns
-  /// the channel of the engine, so it hands it over.
-  weak var channel: FlutterMethodChannel?
-
   private var interactiveTrackingDisplayLink: CADisplayLink?
-  private var lastReportedTranslation: CGFloat?
+  private var isInsetSyncScheduled = false
+  private var lastReportedInset: CGFloat?
   private var lastBandBottom: CGFloat?
   private var staticTicks = 0
   private var trackingTicks = 0
+  private var missingBandTicks = 0
+  private var invalidatedEngineAnimation = false
 
   private init() {
     NotificationCenter.default.addObserver(
@@ -58,11 +57,6 @@ class KeyboardManager {
 
   // MARK: - Interactive dismissal
 
-  /// Whether the plugin is in charge of the position of the accessory.
-  private var isDrivingTranslation: Bool {
-    interactiveTrackingDisplayLink != nil
-  }
-
   /// Whether the user is currently dragging the keyboard away.
   private var isDraggingKeyboard: Bool {
     activeScrollViews.contains {
@@ -73,17 +67,40 @@ class KeyboardManager {
 
   /// Called from the swizzled keyboard notification handlers before the engine processes them.
   ///
-  /// The engine animates the viewport inset towards the notified frame over the animation duration
-  /// of the notification, which makes the Flutter accessory trail behind the keyboard. While the
-  /// plugin drives the position of the accessory itself, the notifications are handed over
-  /// unchanged, so the content of the app keeps following the keyboard the way it always did.
+  /// The frame changes posted while the keyboard is dragged carry an empty frame, so a notification
+  /// here ends the gesture (or changes the keyboard for another reason): the plugin stops driving
+  /// the inset and the engine animates the release from the last inset the plugin wrote, with the
+  /// keyboard's own curve.
+  ///
+  /// The band is deliberately not read here. UIKit may already have moved it to the resting
+  /// position it is about to animate to, and writing that position would snap the content to the
+  /// end of the release instead of animating it.
+  ///
+  /// The notifications the engine ignores are ignored here too, so a zero-frame change posted
+  /// while the keyboard is dragged cannot stop the tracking and freeze the inset.
   func willProcessKeyboardNotification(_ notification: Notification?) {
-    guard let notification else { return }
+    guard let notification, !isIgnoredByEngine(notification) else { return }
+    stopInteractiveTracking()
+  }
 
-    if notification.name == UIResponder.keyboardWillHideNotification {
-      // The keyboard is gone for good.
-      stopInteractiveTracking()
+  /// Whether the engine would ignore this notification.
+  ///
+  /// Mirrors the filter of the engine's keyboard inset manager: a frame change with an empty frame
+  /// is posted while the keyboard is dragged, and a notification that is not local belongs to
+  /// another app or view controller.
+  private func isIgnoredByEngine(_ notification: Notification) -> Bool {
+    // The engine always handles hide notifications.
+    guard notification.name != UIResponder.keyboardWillHideNotification else { return false }
+
+    let info = notification.userInfo
+    if let isLocal = info?[UIResponder.keyboardIsLocalUserInfoKey] as? Bool, !isLocal {
+      return true
     }
+    guard notification.name == UIResponder.keyboardWillChangeFrameNotification else { return false }
+    // Only an exactly zero frame is posted while the keyboard is dragged; an empty frame with a
+    // position can be a multitasking switch, which the engine does handle.
+    let frame = (info?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue ?? .zero
+    return frame == .zero
   }
 
   /// Starts live keyboard tracking if a keyboard accessory view is currently on screen.
@@ -94,12 +111,32 @@ class KeyboardManager {
     startInteractiveTracking()
   }
 
+  /// Called from the pan gesture on every `.began` / `.changed`.
+  ///
+  /// UIKit applies the drag after the touch is delivered; the inset is written on the next main
+  /// runloop turn so it sees the position UIKit just applied, and still lands before the next
+  /// vsync — a write from the display link would miss the frame that is already starting.
+  func keyboardDragDidChange() {
+    guard interactiveTrackingDisplayLink != nil, !isInsetSyncScheduled else { return }
+    isInsetSyncScheduled = true
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.isInsetSyncScheduled = false
+      // The gesture may have ended before this turn: the engine already took the inset over.
+      guard self.interactiveTrackingDisplayLink != nil else { return }
+      self.syncInset()
+    }
+  }
+
   private func startInteractiveTracking() {
     guard interactiveTrackingDisplayLink == nil else { return }
-    lastReportedTranslation = nil
+    lastReportedInset = nil
     lastBandBottom = nil
     staticTicks = 0
     trackingTicks = 0
+    missingBandTicks = 0
+    isInsetSyncScheduled = false
+    invalidatedEngineAnimation = false
 
     let displayLink = CADisplayLink(target: self, selector: #selector(trackInteractiveKeyboard))
     displayLink.add(to: .main, forMode: .common)
@@ -109,11 +146,13 @@ class KeyboardManager {
   func stopInteractiveTracking() {
     interactiveTrackingDisplayLink?.invalidate()
     interactiveTrackingDisplayLink = nil
-    lastReportedTranslation = nil
+    lastReportedInset = nil
     lastBandBottom = nil
     staticTicks = 0
     trackingTicks = 0
-    reportTranslation(0)
+    missingBandTicks = 0
+    isInsetSyncScheduled = false
+    invalidatedEngineAnimation = false
   }
 
   @objc
@@ -124,7 +163,14 @@ class KeyboardManager {
   @objc
   private func trackInteractiveKeyboard() {
     trackingTicks += 1
-    let bandBottom = reportLiveTranslation()
+    let bandBottom = syncInset()
+
+    // The band left the screen: there is nothing left to follow.
+    missingBandTicks = bandBottom == nil ? missingBandTicks + 1 : 0
+    if missingBandTicks >= 5 {
+      stopInteractiveTracking()
+      return
+    }
 
     let hasStoppedMoving = bandBottom != nil && bandBottom == lastBandBottom
     lastBandBottom = bandBottom
@@ -132,31 +178,32 @@ class KeyboardManager {
 
     // The tracking ends once the keyboard came to rest. While the keyboard keeps moving, either
     // because it is dragged or because it animates back into place, the plugin stays in charge of
-    // the position of the accessory.
+    // the inset.
     let hasSettled = KeyboardGeometry.shouldStopTracking(
       isDragging: isDraggingKeyboard,
       hasStoppedMoving: hasStoppedMoving,
       staticTicks: staticTicks
     )
-    if hasSettled || trackingTicks > 600 {
+    if hasSettled || (trackingTicks > 600 && !isDraggingKeyboard) {
       stopInteractiveTracking()
     }
   }
 
-  /// Reports how far the accessory has to be moved to stay glued to the band.
-  ///
-  /// The accessory is laid out at the bottom of the content area, which is the bottom of the view
-  /// minus the viewport inset the engine reports. The band is at the bottom of the view minus its
-  /// own offset. The difference between both is the distance the accessory has to be moved.
+  /// Writes the viewport inset that keeps the content glued to the live keyboard band.
   ///
   /// The band is read from the model layer on purpose: while the keyboard follows the finger the
   /// model layer already holds the position of the frame that is about to be rendered, while the
   /// presentation layer would still hold the position of the previous frame. When the keyboard
   /// animates back into place after the release, the model layer holds the final position while the
   /// presentation layer holds the animated one, so the presentation layer is used in that case.
+  ///
+  /// - Returns: The bottom edge of the band in screen coordinates, if it is on screen.
   @discardableResult
-  private func reportLiveTranslation() -> CGFloat? {
+  private func syncInset() -> CGFloat? {
     guard
+      let flutterViewController,
+      let flutterView = flutterViewController.view,
+      flutterView.window != nil,
       let accessoryView = activeInputAccessoryViews.first(where: { $0.window != nil }),
       let window = accessoryView.window
     else {
@@ -165,46 +212,107 @@ class KeyboardManager {
     let screen = window.screen
 
     let bandRect = liveScreenRect(of: accessoryView, in: screen)
+    let viewRect = liveScreenRect(of: flutterView, in: screen)
+
+    // A floating keyboard has no inset in the engine, so it must not be driven here either.
+    guard KeyboardGeometry.isDockedBand(bandWidth: bandRect.width, viewWidth: viewRect.width) else {
+      return nil
+    }
+
     let bandBottom = bandRect.maxY
-    let bandOffset = KeyboardGeometry.bandOffset(
+    let inset = KeyboardGeometry.inset(
       bandBottom: bandBottom,
-      screenBottom: screen.bounds.maxY
-    )
-    let translation = KeyboardGeometry.accessoryTranslation(
-      viewportInset: currentViewportInset(),
-      bandOffset: bandOffset
+      viewBottom: viewRect.maxY,
+      scale: screen.scale
     )
 
-    guard translation != lastReportedTranslation else { return bandBottom }
-    lastReportedTranslation = translation
-
-    reportTranslation(translation)
+    guard inset != lastReportedInset else { return bandBottom }
+    lastReportedInset = inset
+    // Stop the engine's own inset animation, if one is in flight, only now that there is a value to
+    // put in its place: while the plugin follows the finger the engine must not animate its own
+    // inset on top of the live values. Invalidating it earlier would strand a half-finished show
+    // animation if the plugin then had nothing to write.
+    invalidateEngineAnimationIfNeeded()
+    updateViewportMetrics(inset)
+    syncEngineTargetInset(inset)
     return bandBottom
   }
 
-  /// The bottom inset the engine currently reports, in points.
-  private func currentViewportInset() -> CGFloat {
+  /// Writes the bottom view inset of the engine, in physical pixels.
+  ///
+  /// The engine exposes the setter of the viewport metrics only to Objective-C, so it is called
+  /// through the runtime. It writes the position the keyboard has right now, so the next frame is
+  /// laid out against it instead of one vsync later.
+  private func updateViewportMetrics(_ inset: CGFloat) {
+    let selector = NSSelectorFromString("updateViewportMetricsWithInset:")
+    guard
+      let flutterViewController,
+      let method = class_getInstanceMethod(FlutterViewController.self, selector)
+    else {
+      logMissingEngineAPI("updateViewportMetricsWithInset:")
+      return
+    }
+
+    typealias UpdateViewportMetricsFunction = @convention(c) (AnyObject, Selector, CGFloat) -> Void
+    let updateViewportMetrics = unsafeBitCast(
+      method_getImplementation(method),
+      to: UpdateViewportMetricsFunction.self
+    )
+    updateViewportMetrics(flutterViewController, selector, inset)
+  }
+
+  /// Keeps the target inset of the engine on the value the plugin just wrote.
+  ///
+  /// The engine ignores a keyboard notification whose computed inset equals its target, which is
+  /// exactly the frame a cancelled drag is released at. Keeping the target on the live position
+  /// means the release notification always differs from it, so the engine animates from the
+  /// position the keyboard actually has instead of leaving the inset where the drag left it.
+  private func syncEngineTargetInset(_ inset: CGFloat) {
     guard
       let flutterViewController,
       flutterViewController.responds(to: NSSelectorFromString("keyboardInsetManager")),
-      let insetManager = flutterViewController.value(forKey: "keyboardInsetManager") as? NSObject,
-      insetManager.responds(to: NSSelectorFromString("physicalViewInsetBottom")),
-      let inset = insetManager.value(forKey: "physicalViewInsetBottom") as? NSNumber
+      let insetManager = flutterViewController.value(forKey: "keyboardInsetManager") as? NSObject
     else {
-      return 0
+      logMissingEngineAPI("keyboardInsetManager")
+      return
     }
-    let scale = flutterViewController.view.window?.screen.scale ?? 1
-    return inset.doubleValue / scale
+    guard insetManager.responds(to: NSSelectorFromString("setTargetViewInsetBottom:")) else {
+      logMissingEngineAPI("setTargetViewInsetBottom:")
+      return
+    }
+    insetManager.setValue(inset, forKey: "targetViewInsetBottom")
   }
 
-  /// Pushes the translation of the accessory to the Flutter side.
-  ///
-  /// The translation is pushed instead of writing the viewport inset, because a change of the
-  /// viewport inset rebuilds and relayouts the whole widget tree on every frame, which drops frames
-  /// and makes the accessory trail behind the keyboard.
-  private func reportTranslation(_ translation: CGFloat) {
-    guard let channel else { return }
-    channel.invokeMethod("setKeyboardTranslation", arguments: ["translation": translation])
+  /// Stops the engine's own inset animation once the plugin is about to write its own value.
+  private func invalidateEngineAnimationIfNeeded() {
+    guard !invalidatedEngineAnimation else { return }
+    guard
+      let flutterViewController,
+      flutterViewController.responds(to: NSSelectorFromString("keyboardInsetManager")),
+      let insetManager = flutterViewController.value(forKey: "keyboardInsetManager") as? NSObject
+    else {
+      logMissingEngineAPI("keyboardInsetManager")
+      return
+    }
+    guard insetManager.responds(to: NSSelectorFromString("invalidateKeyboardAnimationVSyncClient")) else {
+      logMissingEngineAPI("invalidateKeyboardAnimationVSyncClient")
+      return
+    }
+    invalidatedEngineAnimation = true
+    insetManager.perform(NSSelectorFromString("invalidateKeyboardAnimationVSyncClient"))
+  }
+
+  /// Reports a missing private engine API once, so a future engine rename does not degrade the
+  /// tracking silently.
+  private func logMissingEngineAPI(_ name: String) {
+    #if DEBUG
+    NSLog(
+      """
+      cupertino_interactive_keyboard: the Flutter engine no longer answers \(name); keyboard \
+      tracking falls back to the engine's own behaviour.
+      """
+    )
+    #endif
   }
 
   /// The screen rect of a view, following the presentation tree while an animation is in

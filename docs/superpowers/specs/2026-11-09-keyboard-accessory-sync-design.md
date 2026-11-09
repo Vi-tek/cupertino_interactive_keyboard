@@ -1,68 +1,97 @@
 # Design Doc: 1:1 Interactive Keyboard and Accessory Synchronization
 
 ## Intent & The Why
-When interactively dismissing the iOS keyboard in Flutter (dragging the list down), the native
-keyboard slides down in real time. The Flutter-rendered accessory bar must move down with it,
-staying glued to the top edge of the keyboard, without any visible delay.
 
-## Root Causes (audited)
+When the keyboard is dragged away interactively, it slides down in real time. The Flutter-rendered
+accessory bar must stay glued to its top edge, and the content behind it must grow as the keyboard
+leaves, revealing more rows — the same thing a native iOS app does.
 
-1. **The engine animated the inset towards a stale target.**
-   `FlutterKeyboardInsetManager.handleKeyboardNotification` starts an animation of the viewport
-   inset over the animation duration of the notification and samples it per vsync. While the
-   keyboard is dragged the duration is zero, but the animation still costs a frame and the inset
-   trails the keyboard.
-2. **The live position was read one frame too late.**
-   The position of the keyboard was read from the *presentation* layer inside a
-   `CADisplayLink` callback. A display link fires *before* the next frame is rendered, so the
-   presentation layer still holds the value of the previous frame — a guaranteed frame of delay.
-   This is the same finding react-native-keyboard-controller documented in their PR #412
-   ("we always read a value for a previous frame").
-3. **The engine and the plugin fought over the same value.**
-   The plugin wrote the viewport inset directly while the engine kept animating it, so the two
-   writers interleaved and the accessory visibly detached from the keyboard.
-4. **The tracking stopped at the wrong moment.**
-   The tracking was torn down as soon as the drag gesture ended, while the keyboard was still
-   animating back into place.
+## What Actually Happens (audited)
+
+1. **The frame-change notifications posted while the keyboard is dragged carry no frame.** iOS
+   sends an empty `keyboardWillChangeFrame` while the drag runs and the usable notifications only
+   when the gesture ends. The plugin has to read the live position itself, and must not treat the
+   empty one as the end of the drag.
+2. **During the drag UIKit moves the keyboard container directly.** Its *model* layer holds the
+   frame that is about to be rendered; the *presentation* layer still holds the previous frame —
+   the one-frame error react-native-keyboard-controller documented in their PR #412.
+3. **A write of the viewport inset made from a CADisplayLink is one frame too late.** The engine's
+   vsync callback runs before the plugin's display link callback, so the frame that is starting
+   never sees the new inset. The write has to happen while the drag is being handled, before the
+   vsync.
+4. **The accessory cannot be moved on its own.** The bar is laid out at the bottom of the content
+   area, and the content area only grows when the viewport inset changes. A widget Transform keeps
+   the bar under the keyboard but freezes the list: the rows that should be revealed stay hidden.
+   The viewport inset is the single driver.
+5. **The engine animates the inset towards every notification** over the notification's duration.
+   While the plugin drives the inset, nothing of the engine may animate on top of the plugin's
+   values; when the plugin lets go, the engine must take over from the live position.
 
 ## Goals
-- The accessory stays glued to the top edge of the keyboard for the whole gesture.
-- The release animation is handled by the engine, so it matches the curve of the keyboard exactly.
-- No visible delay between the keyboard and the accessory.
+
+- The bar stays glued to the keyboard's top edge for the whole gesture, with no visible delay.
+- The content grows while the keyboard leaves, revealing rows, as on iOS.
+- The release animation is the keyboard's own: the plugin hands the live position to the engine
+  the moment the gesture ends.
+- No change to the public Dart API.
 
 ## Non-Goals & Anti-Goals
-- Replacing the Flutter-rendered accessory with a native one. The plugin keeps rendering the
-  accessory with Flutter widgets.
-- Changing the public Dart API.
+
+- Replacing the Flutter-rendered accessory with a native view.
+- Moving the bar with a widget Transform while the content stays frozen (the 6dc5869 approach).
+- Synthetic keyboard notifications fabricated from gesture geometry.
 
 ## Constraints
-- No iOS simulator may be run for development or verification.
 
-## Approach
+- No iOS simulator may be run. Verification is static: geometry checks, Dart tests, iOS build.
+- The accessory keeps being rendered with Flutter widgets.
 
-**The native input accessory view is the reference.** `CIKInputAccessoryView` is the real
-`inputAccessoryView` of the Flutter text input, so UIKit moves it in lockstep with the keyboard.
-Its bottom edge is the live top edge of the keyboard, and the Flutter accessory has to be drawn
-exactly there.
+## Approaches Considered
 
-**The plugin drives the viewport inset itself during the drag.**
+- **Flutter gesture detector drives the bar (proposed).** Flutter receives the same touches as the
+  dismissal gesture, so a `Listener` could move the bar in the frame the finger moved — no platform
+  channel latency. But the content can only grow through the viewport inset, and Dart cannot write
+  it. This approach can move the bar, never reveal rows. Rejected by the content requirement.
+- **Native push + Dart Transform (committed as 6dc5869).** Geometrically exact, paint-only, no
+  relayout; same blind spot: the content stays frozen. Kept in history, not used.
+- **Engine viewport inset driven from the live band position (selected).** One driver for the bar
+  and the content, written at touch time so it lands in the frame that is about to be rendered.
 
-- `CIKScrollView` starts the tracking when the pan gesture begins, before the keyboard moves.
-- Every vsync the plugin reads the live position of the band and writes the resulting inset
-  straight into the engine with `updateViewportMetricsWithInset:`, bypassing the animation
-  machinery of the engine. The inset therefore follows the keyboard instead of easing towards it.
-- The band is read from the **model** layer while the keyboard is dragged, because UIKit moves it
-  directly and the model already holds the position of the frame that is about to be rendered.
-  When the keyboard animates back into place, the closest animated ancestor is used to correct
-  the model geometry by the offset that is still missing.
-- While the plugin is in charge, the notifications of the drag are not handed over to the engine
-  and the target inset of the engine is kept in sync, so the engine does not animate the same
-  value a second time.
-- The tracking keeps running until the keyboard came to rest, so the release animation is not cut
-  off half way.
+## How It Works
+
+- `CIKScrollView` forwards `.began` / `.changed` of the dismissal pan to `KeyboardManager`; the
+  interactive dismissal notification and the display link also start tracking. The release itself
+  is driven by the display link, not by the pan.
+- On each change the manager schedules **one** sync on the next main-runloop turn — after UIKit has
+  applied the drag and before the next vsync — reads the band's model position, computes the bottom
+  inset the viewport needs and writes it with `updateViewportMetricsWithInset:`.
+- A `CADisplayLink` repeats the sync every frame while the keyboard is moving, which covers motion
+  that does not come from a touch (settling, animation). Tracking stops when the band comes to
+  rest, when the band leaves the window, and on the notifications the engine acts on.
+- While an animation is in flight the model geometry is corrected by the difference between the
+  closest animated ancestor's presentation and model frames.
+- Every write also sets the engine's `targetViewInsetBottom` to the same value. The engine ignores
+  a notification whose computed inset equals its target — the frame a cancelled drag is released
+  at — so keeping the target on the live position guarantees the release always animates from
+  where the keyboard actually is, with the keyboard's own curve.
+- When the gesture ends iOS posts the final frame. The manager stops driving there and the engine
+  animates the release from the last inset the plugin wrote. The band is not read again at that
+  moment: UIKit may already hold the resting position it is about to animate to, and writing it
+  would snap the content to the end of the release.
+- The engine's own inset animation is invalidated on the first write of a tracking session, not
+  when tracking starts: while the plugin follows the finger the engine must not animate on top of
+  the live values, but a session that never writes must leave a show animation running.
+- Notifications the engine ignores (an exactly zero frame change posted while the keyboard is
+  dragged, keyboards that belong to another app) do not stop the tracking. A keyboard whose
+  accessory view is narrower than the Flutter view is a floating keyboard; the engine gives those
+  no inset, so they are not driven either.
+- The inset is written in physical pixels: `(flutterViewBottom - bandBottom) * screen.scale`, both
+  edges taken in screen points so a non-fullscreen Flutter view cannot skew it.
 
 ## Verification
-- `ios/KeyboardGeometryTests/run.sh` checks the geometry and the lifecycle of the tracking
-  without a simulator.
-- `flutter test` covers the Dart side.
-- `flutter build ios --no-codesign --simulator` verifies that the plugin compiles.
+
+- `ios/KeyboardGeometryTests/run.sh` — inset math, clamping and settle lifecycle, no simulator.
+- `flutter test` — the Dart contract is unchanged by this design.
+- `flutter analyze`.
+- `flutter build ios --no-codesign --simulator` — the plugin compiles.
+- Device check by the human: frame pacing and stickiness are only visible on hardware.
