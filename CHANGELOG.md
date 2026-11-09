@@ -1,3 +1,15 @@
+## 1.1.1 - A transparent bar you can hide
+
+* The hosted bar's native container and the accessory engine's view are transparent: the bar shows
+  only the pixels its Flutter app paints, so the app's own content (a chat background, a gradient)
+  shows through instead of a system-background band. An app that wants an opaque bar paints it in
+  the accessory.
+* `CupertinoKeyboardAccessory(hidden:)` keeps the engine and its widget state alive while skipping
+  drawing and hit-testing, so a bar that is only visible while a panel or screen is open can be
+  toggled instead of created and destroyed. A hidden bar is also not treated as the live keyboard
+  band by the inset driver. Created hidden through the new `hidden` field on
+  `createHostedAccessory`, toggled through the new `updateHostedAccessoryHidden` platform method.
+
 ## 1.1.0 - Your Flutter bar, glued to the keyboard
 
 * Hosted input accessory bar: your own Flutter composer (TextField, Material, anything) rendered by a

@@ -69,6 +69,7 @@ class MethodChannelCupertinoInteractiveKeyboard
     required String entrypoint,
     required String libraryURI,
     required double height,
+    bool hidden = false,
   }) async {
     final result = await methodChannel.invokeMethod<Map<Object?, Object?>>(
       'createHostedAccessory',
@@ -76,9 +77,17 @@ class MethodChannelCupertinoInteractiveKeyboard
         'entrypoint': entrypoint,
         'libraryURI': libraryURI,
         'height': height,
+        'hidden': hidden,
       },
     );
     return (result?['height'] as num?)?.toDouble();
+  }
+
+  @override
+  Future<void> updateHostedAccessoryHidden(bool hidden) {
+    return methodChannel.invokeMethod('updateHostedAccessoryHidden', {
+      'hidden': hidden,
+    });
   }
 
   @override

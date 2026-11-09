@@ -10,6 +10,9 @@ struct NativeAccessoryConfig {
   let libraryURI: String
   /// The height of the bar's Flutter content, bottom safe area excluded.
   let height: CGFloat
+  /// Whether the bar starts hidden. A hidden bar keeps its engine alive but is neither drawn nor
+  /// hit-tested, so it can be shown again on the next frame.
+  let hidden: Bool
 
   init?(arguments: Any?) {
     guard
@@ -24,6 +27,7 @@ struct NativeAccessoryConfig {
     self.entrypoint = entrypoint
     self.libraryURI = libraryURI
     self.height = CGFloat(height.doubleValue)
+    self.hidden = arguments["hidden"] as? Bool ?? false
   }
 }
 

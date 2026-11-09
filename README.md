@@ -238,8 +238,10 @@ Column(
 
 ### Main isolate
 
-- `CupertinoHostedInputAccessory({required String entrypoint, required String libraryURI, double height = 56, CupertinoHostedInputAccessoryController? controller})`
+- `CupertinoKeyboardAccessory({required String entrypoint, required String libraryURI, double height = 56, bool hidden = false, CupertinoHostedInputAccessoryController? controller})`
   reserves the bar's height in the layout and hosts the accessory UI.
+  `hidden` keeps the engine alive but skips drawing and hit-testing, so a bar that is only
+  visible while its screen is open can be toggled instead of created and destroyed.
 - `CupertinoHostedInputAccessoryController`
   - `void invoke(String method, [Object? arguments])` — send to the bar.
   - `void Function(String method, Object? arguments)? onInvoke` — receive from the bar.
@@ -264,6 +266,12 @@ Column(
   plugin). Make your bar fill the height it is given.
 - The bar runs in a second isolate: it cannot use the main isolate's widget instances or theme;
   send what it needs through the bridge (as the theme example does).
+- The bar's native container and the accessory engine's view are transparent: the plugin paints
+  nothing behind the accessory's widgets, so whatever the app draws there (a chat background, a
+  gradient) shows through. An app that wants an opaque bar paints one inside its accessory.
+- `hidden` is the cheap visibility switch: the engine and its widget state stay alive, only
+  drawing and hit-testing are skipped. Use it for a bar that appears with a panel or a screen;
+  unmount the widget only when the bar is really done.
 
 ## Example app
 

@@ -42,6 +42,7 @@ void main() {
 
   Widget accessory({
     double height = 48,
+    bool hidden = false,
     CupertinoHostedInputAccessoryController? controller,
   }) {
     return host(
@@ -49,6 +50,7 @@ void main() {
         entrypoint: entrypoint,
         libraryURI: libraryURI,
         height: height,
+        hidden: hidden,
         controller: controller,
       ),
     );
@@ -65,6 +67,7 @@ void main() {
         'entrypoint': entrypoint,
         'libraryURI': libraryURI,
         'height': 48.0,
+        'hidden': false,
       });
 
       expect(
@@ -175,6 +178,26 @@ void main() {
   );
 
   testWidgets(
+    'creates hidden and toggles the bar without recreating the engine',
+    (tester) async {
+      await tester.pumpWidget(accessory(hidden: true));
+      await tester.pump();
+
+      expect(plugin.hostedAccessoryCreateCalls.single['hidden'], isTrue);
+
+      await tester.pumpWidget(accessory());
+      await tester.pump();
+      expect(plugin.hostedAccessoryHiddenCalls, [false]);
+      expect(plugin.hostedAccessoryCreateCalls, hasLength(1));
+
+      await tester.pumpWidget(accessory());
+      await tester.pump();
+      expect(plugin.hostedAccessoryHiddenCalls, [false]);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
     'renders nothing and calls nothing on non-iOS platforms',
     (tester) async {
       await tester.pumpWidget(accessory());
@@ -186,6 +209,7 @@ void main() {
       );
       expect(plugin.hostedAccessoryCreateCalls, isEmpty);
       expect(plugin.hostedAccessoryHeights, isEmpty);
+      expect(plugin.hostedAccessoryHiddenCalls, isEmpty);
       expect(plugin.hostedAccessoryInvokes, isEmpty);
 
       await tester.pumpWidget(const SizedBox.shrink());
@@ -217,6 +241,7 @@ void main() {
         96,
       );
       await implementation.updateHostedAccessoryHeight(64);
+      await implementation.updateHostedAccessoryHidden(true);
       await implementation.invokeHostedAccessory('theme', {'surface': 1});
       await implementation.invokeHostedAccessory('ping', null);
       await implementation.removeHostedAccessory();
@@ -224,6 +249,7 @@ void main() {
       expect(calls.map((call) => call.method), [
         'createHostedAccessory',
         'updateHostedAccessoryHeight',
+        'updateHostedAccessoryHidden',
         'invokeHostedAccessory',
         'invokeHostedAccessory',
         'removeHostedAccessory',
@@ -232,14 +258,16 @@ void main() {
         'entrypoint': entrypoint,
         'libraryURI': libraryURI,
         'height': 56.0,
+        'hidden': false,
       });
       expect(calls[1].arguments, {'height': 64.0});
-      expect(calls[2].arguments, {
+      expect(calls[2].arguments, {'hidden': true});
+      expect(calls[3].arguments, {
         'method': 'theme',
         'arguments': {'surface': 1},
       });
-      expect(calls[3].arguments, {'method': 'ping', 'arguments': null});
-      expect(calls[4].arguments, isNull);
+      expect(calls[4].arguments, {'method': 'ping', 'arguments': null});
+      expect(calls[5].arguments, isNull);
     },
   );
 

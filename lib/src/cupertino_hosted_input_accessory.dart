@@ -40,6 +40,7 @@ class CupertinoKeyboardAccessory extends StatefulWidget {
     required this.entrypoint,
     required this.libraryURI,
     this.height = 56,
+    this.hidden = false,
     this.controller,
   });
 
@@ -51,6 +52,14 @@ class CupertinoKeyboardAccessory extends StatefulWidget {
 
   /// The bar's height without the bottom safe area.
   final double height;
+
+  /// Whether the bar is hidden.
+  ///
+  /// A hidden bar keeps its engine and widget state; it is only skipped when
+  /// drawing and hit-testing, so toggling it is cheap. This widget still
+  /// reserves the bar's height in the layout while it is hidden - unmount it
+  /// to give the space back.
+  final bool hidden;
 
   /// The main isolate's half of the bridge; one is created internally when
   /// null, so pass one to receive calls.
@@ -88,7 +97,14 @@ class _CupertinoKeyboardAccessoryState
   @override
   void didUpdateWidget(CupertinoKeyboardAccessory oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!_isIOS || widget.height == oldWidget.height) {
+    if (!_isIOS) {
+      return;
+    }
+    if (widget.hidden != oldWidget.hidden) {
+      CupertinoInteractiveKeyboardPlatform.instance
+          .updateHostedAccessoryHidden(widget.hidden);
+    }
+    if (widget.height == oldWidget.height) {
       return;
     }
     // Native will report the new total height; until then reserve the new
@@ -124,6 +140,7 @@ class _CupertinoKeyboardAccessoryState
       entrypoint: widget.entrypoint,
       libraryURI: widget.libraryURI,
       height: widget.height,
+      hidden: widget.hidden,
     );
     if (!mounted || height == null) {
       return;

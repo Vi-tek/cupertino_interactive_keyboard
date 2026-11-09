@@ -144,7 +144,20 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
         self.hostedAccessoryBar?.apply(height: CGFloat(height.doubleValue))
         result(nil)
       }
-      
+
+    case "updateHostedAccessoryHidden":
+      guard
+        let args = call.arguments as? [String: Any],
+        let hidden = args["hidden"] as? Bool
+      else {
+        return result(FlutterMethodNotImplemented)
+      }
+
+      DispatchQueue.main.async {
+        self.updateHostedAccessoryHidden(hidden)
+        result(nil)
+      }
+
     case "invokeHostedAccessory":
       guard
         let args = call.arguments as? [String: Any],
@@ -197,9 +210,11 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     tearDownHostedAccessory()
     
     let bar = CIKHostedAccessoryBar(config: config)
-    // The hosted Flutter view is opaque black until its first frame; painting the bar with the
-    // system background keeps that flash invisible.
-    bar.backgroundColor = .systemBackground
+    // The bar's own view stays transparent: the accessory engine draws the app's bar, and
+    // whatever the app paints behind it (or leaves unpainted) has to stay visible. An app that
+    // wants an opaque bar paints it inside its accessory widget.
+    bar.backgroundColor = .clear
+    bar.isHidden = config.hidden
     let flutterView = flutterViewController.view!
     flutterView.addSubview(bar)
     NSLayoutConstraint.activate([
@@ -232,6 +247,11 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     )
     
     let accessoryViewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
+    // The accessory engine's view is transparent too, so the bar only shows the pixels its Flutter
+    // app actually paints. Without this the engine's own opaque layer hides the app behind the
+    // bar and every bar would need a background of its own.
+    accessoryViewController.isViewOpaque = false
+    accessoryViewController.view.backgroundColor = .clear
     flutterViewController.addChild(accessoryViewController)
     bar.host(accessoryViewController.view)
     accessoryViewController.didMove(toParent: flutterViewController)
@@ -250,7 +270,8 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     self.accessoryViewController = accessoryViewController
     self.accessoryChannel = accessoryChannel
     self.hostedAccessoryBar = bar
-    KeyboardManager.shared.hostedAccessoryBar = bar
+    // A hidden bar is not the live keyboard band, so the inset driver must not follow it.
+    KeyboardManager.shared.hostedAccessoryBar = config.hidden ? nil : bar
     
     // Lay the bar out once so the height handed back already reflects its real safe area.
     flutterView.layoutIfNeeded()
@@ -292,6 +313,16 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     result(nil)
   }
   
+  /// Shows or hides the bar without tearing its engine down.
+  ///
+  /// Hiding only skips drawing and hit-testing, so the accessory app keeps its state and showing
+  /// it again costs a frame. A hidden bar also stops being the keyboard band the inset driver
+  /// follows: it is not on screen, so its frame says nothing about the keyboard.
+  private func updateHostedAccessoryHidden(_ hidden: Bool) {
+    hostedAccessoryBar?.isHidden = hidden
+    KeyboardManager.shared.hostedAccessoryBar = hidden ? nil : hostedAccessoryBar
+  }
+
   /// Sends a message to the accessory app, queueing it until the app reported `ready`.
   private func invokeHostedAccessory(_ message: [String: Any]) {
     guard accessoryReady else {

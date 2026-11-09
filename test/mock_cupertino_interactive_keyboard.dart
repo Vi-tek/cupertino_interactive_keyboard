@@ -14,6 +14,9 @@ class MockCupertinoInteractiveKeyboard
   /// Heights passed to [updateHostedAccessoryHeight], in call order.
   final hostedAccessoryHeights = <double>[];
 
+  /// Hidden values passed to [updateHostedAccessoryHidden], in call order.
+  final hostedAccessoryHiddenCalls = <bool>[];
+
   /// Calls passed to [invokeHostedAccessory], in call order.
   final hostedAccessoryInvokes = <Map<String, Object?>>[];
 
@@ -41,13 +44,21 @@ class MockCupertinoInteractiveKeyboard
     required String entrypoint,
     required String libraryURI,
     required double height,
+    bool hidden = false,
   }) {
     hostedAccessoryCreateCalls.add({
       'entrypoint': entrypoint,
       'libraryURI': libraryURI,
       'height': height,
+      'hidden': hidden,
     });
     return Future.value(createResultHeight);
+  }
+
+  @override
+  Future<void> updateHostedAccessoryHidden(bool hidden) {
+    hostedAccessoryHiddenCalls.add(hidden);
+    return Future.value();
   }
 
   @override

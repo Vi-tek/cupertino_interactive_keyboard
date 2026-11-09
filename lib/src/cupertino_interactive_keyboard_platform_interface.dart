@@ -53,15 +53,28 @@ abstract class CupertinoInteractiveKeyboardPlatform extends PlatformInterface {
 
   /// Creates the hosted accessory running [entrypoint] from [libraryURI].
   ///
-  /// Returns the total bar height, including the bottom safe area, or null on
-  /// platforms that cannot host one.
+  /// [hidden] creates the bar without showing it, so an app that starts with
+  /// the bar off screen does not flash it. Returns the total bar height,
+  /// including the bottom safe area, or null on platforms that cannot host
+  /// one.
   Future<double?> createHostedAccessory({
     required String entrypoint,
     required String libraryURI,
     required double height,
+    bool hidden = false,
   }) {
     throw UnimplementedError(
       'createHostedAccessory() has not been implemented.',
+    );
+  }
+
+  /// Shows or hides the hosted accessory bar without tearing its engine down.
+  ///
+  /// A hidden bar keeps its isolate and widget state; it is only skipped when
+  /// drawing and hit-testing, so toggling it is cheap.
+  Future<void> updateHostedAccessoryHidden(bool hidden) {
+    throw UnimplementedError(
+      'updateHostedAccessoryHidden() has not been implemented.',
     );
   }
 
