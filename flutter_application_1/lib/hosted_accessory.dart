@@ -40,6 +40,9 @@ class _HostedAccessoryState extends State<HostedAccessory> {
             placeholderColor: colorScheme.onSurface.withValues(alpha: 0.5),
             iconColor: colorScheme.primary,
             controller: _controller,
+            // This app's own Flutter bar, running in the accessory engine.
+            accessoryEntrypoint: 'accessoryMain',
+            accessoryLibraryURI: 'package:flutter_application_1/accessory_composer.dart',
             onSend: (_) => _controller.clear(),
           ),
         ],

@@ -39,7 +39,9 @@ void main() {
   }
 
   testWidgets('reports ready and renders the pushed config', (tester) async {
-    await tester.pumpWidget(const CupertinoAccessoryApp());
+    await tester.pumpWidget(
+      const CupertinoAccessoryHost(builder: cupertinoAccessoryBuilder),
+    );
     await tester.pump();
 
     expect(calls.where((call) => call.method == 'ready'), hasLength(1));
@@ -71,7 +73,9 @@ void main() {
 
   testWidgets('emits textChanged while typing and send on press',
       (tester) async {
-    await tester.pumpWidget(const CupertinoAccessoryApp());
+    await tester.pumpWidget(
+      const CupertinoAccessoryHost(builder: cupertinoAccessoryBuilder),
+    );
     await push(tester, 'config', {'placeholder': 'Say something...'});
     calls.clear();
 
@@ -91,7 +95,9 @@ void main() {
   testWidgets('setText updates the field without echoing textChanged', (
     tester,
   ) async {
-    await tester.pumpWidget(const CupertinoAccessoryApp());
+    await tester.pumpWidget(
+      const CupertinoAccessoryHost(builder: cupertinoAccessoryBuilder),
+    );
     await push(tester, 'config', {'placeholder': 'Say something...'});
     calls.clear();
 
