@@ -117,7 +117,13 @@ class KeyboardManager {
   /// runloop turn so it sees the position UIKit just applied, and still lands before the next
   /// vsync — a write from the display link would miss the frame that is already starting.
   func keyboardDragDidChange() {
-    guard interactiveTrackingDisplayLink != nil, !isInsetSyncScheduled else { return }
+    guard interactiveTrackingDisplayLink != nil else { return }
+    // UIKit has normally already applied the drag by the time the gesture action runs, so the
+    // position is written here as well: a write from the deferred block below can miss the frame
+    // that is about to start, and the missed frame is the visible correction at the start of a
+    // drag.
+    syncInset()
+    guard !isInsetSyncScheduled else { return }
     isInsetSyncScheduled = true
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
