@@ -96,6 +96,26 @@ void main() {
     expect(calls[1].arguments, {'method': 'ping', 'arguments': null});
   });
 
+  testWidgets('reports the bar content height to native', (tester) async {
+    runCupertinoAccessory(
+      (context, value) => const SizedBox(
+        height: 120,
+        width: 10,
+        child: ColoredBox(color: Colors.red),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    final heights = calls
+        .where((call) => call.method == 'contentHeight')
+        .map((call) => ((call.arguments as Map)['height'] as num).toDouble())
+        .toList();
+    expect(heights, isNotEmpty);
+    expect(heights.last, closeTo(120, 0.5));
+  });
+
   testWidgets('removes the channel handler on dispose', (tester) async {
     late CupertinoAccessoryController controller;
     var invokes = 0;

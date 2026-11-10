@@ -238,8 +238,9 @@ Column(
 
 ### Main isolate
 
-- `CupertinoKeyboardAccessory({required String entrypoint, required String libraryURI, double height = 56, bool hidden = false, CupertinoHostedInputAccessoryController? controller})`
-  reserves the bar's height in the layout and hosts the accessory UI.
+- `CupertinoKeyboardAccessory({required String entrypoint, required String libraryURI, double? height, bool hidden = false, CupertinoHostedInputAccessoryController? controller})`
+  reserves the bar's height in the layout and hosts the accessory UI. The bar sizes itself from the
+  accessory's content; `height` is only the first-frame reservation (default 56).
   `hidden` keeps the engine alive but skips drawing and hit-testing, so a bar that is only
   visible while its screen is open can be toggled instead of created and destroyed.
 - `CupertinoHostedInputAccessoryController`
@@ -262,8 +263,10 @@ Column(
 
 - The accessory entrypoint must be a top-level function annotated with
   `@pragma('vm:entry-point')`.
-- The bar's height is fixed by the main-isolate widget (default 56, bottom safe area added by the
-  plugin). Make your bar fill the height it is given.
+- The bar's height follows the accessory's content: the plugin lays the bar out at its natural
+  height and resizes the native container, so a multiline composer grows the bar. Build the bar as
+  an intrinsically sized widget (no `Expanded` or full-height scrollable against the vertical axis);
+  the plugin adds the bottom safe area itself.
 - The bar runs in a second isolate: it cannot use the main isolate's widget instances or theme;
   send what it needs through the bridge (as the theme example does).
 - The bar's native container and the accessory engine's view are transparent: the plugin paints

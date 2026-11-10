@@ -5,8 +5,9 @@ import UIKit
 /// The DEBUG-only trace that confirms the keyboard release mechanism on device.
 ///
 /// The file stays linked into release builds, but nothing is evaluated there: [isEnabled] is false
-/// and every call site guards on it, with the message built lazily. In a debug build the trace is on
-/// unless the app is launched with `-CIKTrace NO`.
+/// and every call site guards on it, with the message built lazily. It is off by default even in a
+/// debug build (synchronous logging per keyboard frame costs the pacing it measures) and is enabled
+/// for a run with `-CIKTrace YES`.
 enum CIKTrace {
   /// Whether this binary is a debug build.
   ///
@@ -20,11 +21,12 @@ enum CIKTrace {
 
   /// Whether the trace should log.
   ///
-  /// Launch arguments reach UserDefaults as strings, so the value is parsed with
-  /// `bool(forKey:)`; without an override the build type decides.
+  /// Off unless the app was launched with `-CIKTrace YES`: launch arguments reach UserDefaults as
+  /// strings, so the value is parsed with `bool(forKey:)`.
   static let isEnabled: Bool = {
+    guard isDebugBuild else { return false }
     let defaults = UserDefaults.standard
-    guard defaults.object(forKey: "CIKTrace") != nil else { return isDebugBuild }
+    guard defaults.object(forKey: "CIKTrace") != nil else { return false }
     return defaults.bool(forKey: "CIKTrace")
   }()
 

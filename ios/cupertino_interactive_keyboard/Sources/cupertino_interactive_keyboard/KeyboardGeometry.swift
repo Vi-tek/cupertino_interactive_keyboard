@@ -19,6 +19,27 @@ enum KeyboardGeometry {
     max(0, viewBottom - bandBottom) * scale
   }
 
+  /// The bar inset implied by a band position and the view's height, clamped into the view.
+  static func barInset(bandBottom: CGFloat, viewHeight: CGFloat) -> CGFloat {
+    max(0, min(viewHeight, viewHeight - bandBottom))
+  }
+
+  /// The bar inset for a frame of an interactive drag, from the guide's movement since the drag
+  /// started.
+  ///
+  /// The keyboard layout guide is the only live source of the keyboard's position while it is
+  /// dragged, but the bar is no longer positioned by it: the plugin only uses its delta, so a guide
+  /// that is stale before the drag still tracks the gesture.
+  static func dragBarInset(
+    insetAtStart: CGFloat,
+    guideTopAtStart: CGFloat,
+    guideTop: CGFloat,
+    maxInset: CGFloat
+  ) -> CGFloat {
+    let dragged = insetAtStart + (guideTopAtStart - guideTop)
+    return max(0, min(maxInset, dragged))
+  }
+
   /// The bottom edge of the keyboard band in screen points for a release notification.
   ///
   /// A release notification carries the keyboard's end frame: its top edge is the band's bottom. A

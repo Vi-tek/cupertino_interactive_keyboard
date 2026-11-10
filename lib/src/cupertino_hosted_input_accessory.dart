@@ -39,7 +39,7 @@ class CupertinoKeyboardAccessory extends StatefulWidget {
     super.key,
     required this.entrypoint,
     required this.libraryURI,
-    this.height = 56,
+    this.height,
     this.hidden = false,
     this.controller,
   });
@@ -50,8 +50,12 @@ class CupertinoKeyboardAccessory extends StatefulWidget {
   /// Library URI that contains [entrypoint].
   final String libraryURI;
 
-  /// The bar's height without the bottom safe area.
-  final double height;
+  /// The initial height reserved before the accessory reports its own, without the
+  /// bottom safe area.
+  ///
+  /// The bar sizes itself from the accessory's content (a multiline composer grows it),
+  /// so this is only the first-frame reservation. Pass null to use the plugin default.
+  final double? height;
 
   /// Whether the bar is hidden.
   ///
@@ -104,14 +108,14 @@ class _CupertinoKeyboardAccessoryState
       CupertinoInteractiveKeyboardPlatform.instance
           .updateHostedAccessoryHidden(widget.hidden);
     }
-    if (widget.height == oldWidget.height) {
+    if (widget.height == oldWidget.height || widget.height == null) {
       return;
     }
     // Native will report the new total height; until then reserve the new
     // requested height plus the safe area.
     _reportedHeight = null;
     CupertinoInteractiveKeyboardPlatform.instance
-        .updateHostedAccessoryHeight(widget.height);
+        .updateHostedAccessoryHeight(widget.height!);
   }
 
   @override
@@ -130,7 +134,7 @@ class _CupertinoKeyboardAccessoryState
     }
     return SizedBox(
       height: _reportedHeight ??
-          (widget.height + MediaQuery.paddingOf(context).bottom),
+          ((widget.height ?? 56) + MediaQuery.paddingOf(context).bottom),
     );
   }
 
@@ -139,7 +143,7 @@ class _CupertinoKeyboardAccessoryState
         .createHostedAccessory(
       entrypoint: widget.entrypoint,
       libraryURI: widget.libraryURI,
-      height: widget.height,
+      height: widget.height ?? 56,
       hidden: widget.hidden,
     );
     if (!mounted || height == null) {

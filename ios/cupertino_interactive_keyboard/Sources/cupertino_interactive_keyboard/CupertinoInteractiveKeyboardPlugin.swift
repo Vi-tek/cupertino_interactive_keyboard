@@ -217,17 +217,33 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     bar.isHidden = config.hidden
     let flutterView = flutterViewController.view!
     flutterView.addSubview(bar)
-    NSLayoutConstraint.activate([
-      bar.leadingAnchor.constraint(equalTo: flutterView.leadingAnchor),
-      bar.trailingAnchor.constraint(equalTo: flutterView.trailingAnchor),
-      bar.bottomAnchor.constraint(equalTo: flutterView.keyboardLayoutGuide.topAnchor),
-    ])
-    // The bar carries its own bottom safe-area padding, so the guide must sit on the view's bottom
-    // edge instead of above the home indicator while the keyboard is closed. `usesBottomSafeArea`
-    // is iOS 17+; on iOS 15/16 the guide already rests on the bottom edge.
+    // The layout guide is only a live delta source during drags now, but it must rest on the view's
+    // bottom edge like the bar does: on iOS 17+ its default resting position is the safe-area bottom,
+    // 34 pt above.
     if #available(iOS 17.0, *) {
       flutterView.keyboardLayoutGuide.usesBottomSafeArea = false
     }
+    // The plugin owns the bar's position: the manager holds the inset from the view's bottom and
+    // animates it with each keyboard notification. The bar is created where the keyboard currently
+    // is, which the manager knows from the last notification (or 0 when the keyboard is closed).
+    let initialInset: CGFloat
+    if KeyboardManager.shared.currentBarInset > 0.5 {
+      initialInset = KeyboardManager.shared.currentBarInset
+    } else if #available(iOS 15.0, *) {
+      // The bar can be created while the keyboard is already up and no notification has reached the
+      // manager yet; the guide is then the only reading of the keyboard's position. It rests on the
+      // view's bottom edge when the keyboard is closed, so a small reading is the home indicator,
+      // not a keyboard.
+      flutterView.layoutIfNeeded()
+      let guideTop = flutterView.keyboardLayoutGuide.layoutFrame.minY
+      let guideInset = flutterView.bounds.maxY - guideTop
+      initialInset = guideInset > 50 ? min(guideInset, flutterView.bounds.maxY) : 0
+    } else {
+      initialInset = 0
+    }
+    bar.attach(to: flutterView, bottomInset: initialInset)
+    bar.includesSafeArea = initialInset <= 0.5
+    KeyboardManager.shared.trackBarInset(initialInset)
     
     bar.onHeightChange = { [weak self] height in
       self?.channel?.invokeMethod("hostedAccessoryHeight", arguments: ["height": Double(height)])
@@ -270,9 +286,8 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     self.accessoryViewController = accessoryViewController
     self.accessoryChannel = accessoryChannel
     self.hostedAccessoryBar = bar
-    // The bar is the inset driver's live band even while hidden: it is still pinned to the keyboard
-    // guide and still lays out, and an app whose bar is hidden has to position its own composer with
-    // the inset alone.
+    // The bar is the inset driver's band even while hidden: it is still laid out and positioned, and
+    // an app whose bar is hidden has to position its own composer with the inset alone.
     KeyboardManager.shared.hostedAccessoryBar = bar
     
     // Lay the bar out once so the height handed back already reflects its real safe area.
@@ -294,6 +309,13 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     let arguments = call.arguments as? [String: Any] ?? [:]
     
     switch call.method {
+    case "contentHeight":
+      guard let height = (arguments["height"] as? NSNumber)?.doubleValue else {
+        return result(FlutterMethodNotImplemented)
+      }
+      DispatchQueue.main.async {
+        self.hostedAccessoryBar?.apply(height: CGFloat(height))
+      }
     case "ready":
       accessoryReady = true
       // The main isolate can invoke before the accessory app exists; deliver those now, in order.
@@ -325,11 +347,11 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
   ///
   /// Hiding only skips drawing and hit-testing, so the accessory app keeps its state and showing
   /// it again costs a frame. The bar keeps being the keyboard band the inset driver follows: a
-  /// hidden view still lays out on the keyboard guide, so its frame still tracks the keyboard.
+  /// hidden view still lays out, so its frame and the inset driver still follow the keyboard.
   private func updateHostedAccessoryHidden(_ hidden: Bool) {
     hostedAccessoryBar?.isHidden = hidden
-    // A hidden bar keeps being the live band: it still lays out on the keyboard guide, and while the
-    // bar is hidden the app positions its own composer with the inset alone.
+    // A hidden bar keeps being the live band: it still lays out, and while the bar is hidden the app
+    // positions its own composer with the inset alone.
     KeyboardManager.shared.hostedAccessoryBar = hostedAccessoryBar
     CIKTrace.log("hosted", "hidden=" + String(hidden))
   }

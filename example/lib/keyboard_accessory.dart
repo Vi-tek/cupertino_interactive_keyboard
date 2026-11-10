@@ -152,7 +152,6 @@ class _KeyboardAccessoryState extends State<KeyboardAccessory> {
           CupertinoKeyboardAccessory(
             entrypoint: accessoryEntrypoint,
             libraryURI: accessoryLibraryURI,
-            height: 64,
             controller: _controller,
           ),
         ],

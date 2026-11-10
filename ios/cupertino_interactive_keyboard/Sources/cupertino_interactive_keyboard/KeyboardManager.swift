@@ -11,11 +11,18 @@ class KeyboardManager {
 
   weak var flutterViewController: FlutterViewController?
 
-  /// The hosted accessory bar, when the Dart side uses one. It becomes the live band: its bottom
-  /// edge is the keyboard's top edge while the keyboard is open and the view's bottom edge while it
-  /// is closed, so the same inset formula keeps the content glued to it either way.
+  /// The hosted accessory bar, when the Dart side uses one. The plugin positions it itself: its
+  /// bottom edge is the keyboard's top edge while the keyboard is on screen and the view's bottom
+  /// edge once it is gone, so the same inset formula keeps the content glued to it either way.
   weak var hostedAccessoryBar: CIKHostedAccessoryBar?
 
+  /// The bar's bottom edge in points above the Flutter view's bottom, as last set by a keyboard
+  /// notification. Read when a bar is created while the keyboard is already open.
+  var currentBarInset: CGFloat { barInset }
+
+  private(set) var barInset: CGFloat = 0
+  private var barInsetAtDragStart: CGFloat = 0
+  private var guideTopAtDragStart: CGFloat?
   private var interactiveTrackingDisplayLink: CADisplayLink?
   private var isInsetSyncScheduled = false
   private var lastReportedInset: CGFloat?
@@ -181,8 +188,37 @@ class KeyboardManager {
     }
   }
 
+  /// Seeds the bar inset when the bar is created while the keyboard is already open, so the first
+  /// drag frame does not drive the content from zero.
+  func trackBarInset(_ inset: CGFloat) {
+    barInset = inset
+  }
+
+  /// Stops a running keyboard animation on the bar and pins it where it is currently drawn.
+  ///
+  /// A drag can begin while the keyboard is still animating. Taking over from the animation's end
+  /// target would snap the Flutter content to the end of that animation while the bar is still
+  /// travelling.
+  private func freezeBarAtVisiblePosition() {
+    guard let bar = hostedAccessoryBar, let superview = bar.superview else { return }
+    let frame = bar.layer.presentation()?.frame ?? bar.layer.frame
+    let visibleInset = max(0, superview.bounds.maxY - frame.maxY)
+    bar.layer.removeAllAnimations()
+    bar.setBottomInset(visibleInset)
+    if visibleInset > 0.5 {
+      bar.includesSafeArea = false
+    }
+    UIView.performWithoutAnimation {
+      superview.layoutIfNeeded()
+    }
+    barInset = visibleInset
+  }
+
   private func startInteractiveTracking() {
     guard interactiveTrackingDisplayLink == nil else { return }
+    freezeBarAtVisiblePosition()
+    barInsetAtDragStart = barInset
+    guideTopAtDragStart = guideTopInView()
     lastReportedInset = nil
     lastBandBottom = nil
     staticTicks = 0
@@ -203,9 +239,8 @@ class KeyboardManager {
     }
     interactiveTrackingDisplayLink?.invalidate()
     interactiveTrackingDisplayLink = nil
+    guideTopAtDragStart = nil
     lastReportedInset = nil
-    // `lastBandBottom` is deliberately kept: the release hand-off starts its correction from the
-    // band's last live position, which is only known while the session is running.
     staticTicks = 0
     trackingTicks = 0
     missingBandTicks = 0
@@ -213,62 +248,35 @@ class KeyboardManager {
     invalidatedEngineAnimation = false
   }
 
-  /// The animation key of the bar's release correction, so it can be told apart from UIKit's own.
-  private static let releaseCorrectionKey = "cikReleaseCorrection"
-
-  /// Records the band's position when the drag ends.
+  /// Moves the bar onto the keyboard's end position for a keyboard notification.
   ///
-  /// The last display-link tick can be a frame old, and a release that ends the session before the
-  /// next tick would start the correction from the wrong position.
-  func keyboardDragDidEnd() {
-    guard interactiveTrackingDisplayLink != nil else { return }
-    lastBandBottom = syncInset() ?? lastBandBottom
-  }
-
-  /// Reconciles the bar with the keyboard after a notification.
-  ///
-  /// The keyboard layout guide follows the drag, but its only documented contract is a docked
-  /// keyboard's show/hide animation: on release the guide is moved to the end position in one step,
-  /// so a bar pinned to it snaps while the keyboard keeps animating. This animates the difference
-  /// between where the bar has to be and where Auto Layout put it, with the keyboard notification's
-  /// own duration and curve.
-  ///
-  /// The correction is also reconciled on every later notification while it is non-zero: when the
-  /// guide catches up it animates back to zero, and when it moves somewhere else the offset is
-  /// re-targeted instead of being added on top of the guide's position. A correction that stays
-  /// non-zero after both is logged - that is the case the plugin-owned geometry has to take over.
+  /// The bar is not constrained to the keyboard layout guide: the guide follows the drag but snaps to
+  /// its end position on release, so the plugin moves the bar itself, with the notification's own
+  /// duration and curve. The engine keeps animating the Flutter inset, so nothing is written to it
+  /// here.
   func keyboardNotificationHandled(_ notification: Notification, wasTracking: Bool) {
     guard !isIgnoredByEngine(notification) else { return }
-    // A normal (non-interactive) transition only needs the bar when a correction is still applied.
-    guard wasTracking || abs(hostedAccessoryBar?.transform.ty ?? 0) > 0.5 else { return }
     // UIKit can post the release notification while the dismissal recognizer is still in its
-    // begin/changed phase. One runloop turn later the gesture is over and the correction is not
-    // lost; if it is not over, the drag is still in charge.
+    // begin/changed phase. One runloop turn later the gesture is over.
     if wasTracking, isDraggingKeyboard {
       CIKTrace.log(
         "release",
         "deferred: still dragging notification=" + notification.name.rawValue
       )
       DispatchQueue.main.async { [weak self] in
-        self?.applyBarCorrection(notification, wasTracking: true)
+        self?.applyKeyboardNotification(notification)
       }
       return
     }
-    applyBarCorrection(notification, wasTracking: wasTracking)
+    applyKeyboardNotification(notification)
   }
 
-  private func applyBarCorrection(_ notification: Notification, wasTracking: Bool) {
+  private func applyKeyboardNotification(_ notification: Notification) {
     guard
-      let bar = hostedAccessoryBar,
-      bar.window != nil,
       let flutterViewController,
       let flutterView = flutterViewController.view,
       let window = flutterView.window
     else {
-      return
-    }
-    if wasTracking, isDraggingKeyboard {
-      CIKTrace.log("release", "skip: still dragging after the deferral")
       return
     }
     let info = notification.userInfo
@@ -280,98 +288,54 @@ class KeyboardManager {
       (info?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
     let curve = (info?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 7
     let screen = window.screen
-
-    // The visual position has to be read before Auto Layout is forced to the release's end position.
-    let visualBottomBeforeLayout = bar.frame.maxY
-    let heldCorrection = bar.transform.ty
-    flutterView.layoutIfNeeded()
-
-    // UIKit already animating the bar means this transition went through the guide; leave it alone.
-    let otherAnimations = (bar.layer.animationKeys() ?? []).filter {
-      $0 != Self.releaseCorrectionKey
-    }
-    if !otherAnimations.isEmpty {
-      CIKTrace.log(
-        "release",
-        "skip: bar layer animating keys=" + otherAnimations.joined(separator: ",")
-          + " notification=" + notification.name.rawValue
-      )
-      return
-    }
-
     let viewRect = liveScreenRect(of: flutterView, in: screen)
     // A hidden, empty or floating keyboard leaves no band, so the bar belongs at the view's bottom.
     let hidden =
       notification.name == UIResponder.keyboardWillHideNotification
       || endFrame.isEmpty
       || !KeyboardGeometry.isDockedBand(bandWidth: endFrame.width, viewWidth: viewRect.width)
-    let targetBottom = max(
-      0,
+    let bandBottom =
       KeyboardGeometry.releaseBandBottom(
         keyboardTop: hidden ? nil : endFrame.minY,
         viewBottom: viewRect.maxY
       ) - viewRect.minY
-    )
-    let autoBottom = bar.bottomBeforeTransform
-    let wanted = targetBottom - autoBottom
-    // A release starts where the bar was last drawn; a reconciliation starts from the held offset.
-    let start: CGFloat
-    if wasTracking {
-      start = (lastBandBottom.map { $0 - viewRect.minY } ?? visualBottomBeforeLayout) - autoBottom
-    } else {
-      start = heldCorrection
-    }
+    let targetInset = KeyboardGeometry.barInset(bandBottom: bandBottom, viewHeight: viewRect.height)
+    let includesSafeArea = targetInset <= 0.5
+    barInset = targetInset
     CIKTrace.log(
-      "release",
-      "notification=" + notification.name.rawValue
+      "keyboard",
+      "bar target=" + CIKTrace.points(targetInset)
         + " duration=" + CIKTrace.seconds(duration)
         + " curve=" + String(curve)
-        + " target=" + CIKTrace.points(targetBottom)
-        + " auto=" + CIKTrace.points(autoBottom)
-        + " start=" + CIKTrace.points(start)
-        + " wanted=" + CIKTrace.points(wanted)
-        + " held=" + CIKTrace.points(heldCorrection)
+        + " includesSafeArea=" + String(includesSafeArea)
     )
 
-    if abs(wanted - start) <= 0.5 {
-      // Nothing to travel; drop a stale offset if the guide caught up.
-      if abs(heldCorrection - wanted) > 0.5 {
-        setBarCorrection(bar, wanted)
-      }
+    guard let bar = hostedAccessoryBar, bar.window != nil else { return }
+    let animations = {
+      bar.setBottomInset(targetInset)
+      bar.includesSafeArea = includesSafeArea
+      bar.superview?.layoutIfNeeded()
+    }
+    guard duration > 0 else {
+      UIView.performWithoutAnimation(animations)
       return
     }
-
-    // An explicit `fromValue` is used instead of `UIView.animate`: the bar's layout already jumped
-    // to the end position, so an implicit animation would start from the wrong value.
-    let animation = CABasicAnimation(keyPath: "transform.translation.y")
-    animation.fromValue = start
-    animation.toValue = wanted
-    animation.duration = duration
-    animation.timingFunction = timingFunction(forCurve: curve)
-    bar.layer.add(animation, forKey: Self.releaseCorrectionKey)
-    setBarCorrection(bar, wanted)
+    UIView.animate(
+      withDuration: duration,
+      delay: 0,
+      options: UIView.AnimationOptions(rawValue: curve << 16),
+      animations: animations
+    )
   }
 
-  /// Sets the bar's correction without a competing implicit animation.
-  private func setBarCorrection(_ bar: CIKHostedAccessoryBar, _ correction: CGFloat) {
-    CATransaction.begin()
-    CATransaction.setDisableActions(true)
-    bar.transform = CGAffineTransform(translationX: 0, y: correction)
-    CATransaction.commit()
-  }
-
-  /// The keyboard notification's curve, as a timing function the correction can follow.
+  /// The keyboard layout guide's top in the Flutter view's coordinates, while it is live.
   ///
-  /// Curve 7 is UIKit's private keyboard curve; its spring is not exposed, so the classic keyboard
-  /// control points are used.
-  private func timingFunction(forCurve curve: UInt) -> CAMediaTimingFunction {
-    switch curve {
-    case 0: return CAMediaTimingFunction(name: .easeInEaseOut)
-    case 1: return CAMediaTimingFunction(name: .easeIn)
-    case 2: return CAMediaTimingFunction(name: .easeOut)
-    case 3: return CAMediaTimingFunction(name: .linear)
-    default: return CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1)
-    }
+  /// It is only used as a delta source during an interactive drag, never as the bar's position.
+  private func guideTopInView() -> CGFloat? {
+    guard #available(iOS 15.0, *), let flutterView = flutterViewController?.view else { return nil }
+    let frame = flutterView.keyboardLayoutGuide.layoutFrame
+    // A laid-out guide spans the view's width; a zero frame means it has not been laid out yet.
+    return frame.width > 0 && frame.minY >= 0 && frame.minY.isFinite ? frame.minY : nil
   }
 
   @objc
@@ -408,54 +372,78 @@ class KeyboardManager {
     }
   }
 
-  /// Writes the viewport inset that keeps the content glued to the live keyboard band.
+  /// Drives the bar and the engine inset while the keyboard is dragged.
   ///
-  /// The band is read from the model layer on purpose: while the keyboard follows the finger the
-  /// model layer already holds the position of the frame that is about to be rendered, while the
-  /// presentation layer would still hold the position of the previous frame. When the keyboard
-  /// animates back into place after the release, the model layer holds the final position while the
-  /// presentation layer holds the animated one, so the presentation layer is used in that case.
+  /// The plugin owns the bar's position, so the keyboard layout guide is only used as a live *delta*
+  /// since the drag started: a guide that is stale before the drag cannot offset the bar or the
+  /// inset. The same computed inset moves both, so they cannot disagree.
   ///
-  /// - Returns: The bottom edge of the band in screen coordinates, if it is on screen.
+  /// - Returns: The bottom edge of the keyboard band in screen coordinates, for the settle detection.
   @discardableResult
   private func syncInset() -> CGFloat? {
     guard
       let flutterViewController,
       let flutterView = flutterViewController.view,
-      flutterView.window != nil
-    else {
-      return nil
-    }
-
-    let hostedBar = hostedAccessoryBar.flatMap { $0.window != nil ? $0 : nil }
-    guard
-      let accessoryView = hostedBar ?? activeInputAccessoryViews.first(where: { $0.window != nil }),
-      let window = accessoryView.window
+      let window = flutterView.window
     else {
       return nil
     }
     let screen = window.screen
-
-    let bandRect = liveScreenRect(of: accessoryView, in: screen)
     let viewRect = liveScreenRect(of: flutterView, in: screen)
 
-    // A floating keyboard has no inset in the engine, so it must not be driven here either. The
-    // hosted bar spans the Flutter view by construction, so the guard only applies to the Flutter
-    // accessory view, which UIKit can put in a floating keyboard.
-    if hostedBar == nil,
-      !KeyboardGeometry.isDockedBand(bandWidth: bandRect.width, viewWidth: viewRect.width)
-    {
-      return nil
+    if let bar = hostedAccessoryBar, bar.window != nil {
+      // The guide may not have been laid out when the drag started; take its first live reading as
+      // the start instead of freezing the drag.
+      if guideTopAtDragStart == nil, let guide = guideTopInView() {
+        barInsetAtDragStart = barInset
+        guideTopAtDragStart = guide
+      }
+      let inset: CGFloat
+      if let guideAtStart = guideTopAtDragStart, let guideNow = guideTopInView() {
+        inset = KeyboardGeometry.dragBarInset(
+          insetAtStart: barInsetAtDragStart,
+          guideTopAtStart: guideAtStart,
+          guideTop: guideNow,
+          maxInset: viewRect.height
+        )
+      } else {
+        inset = barInset
+      }
+      if abs(inset - barInset) > 0.5 {
+        barInset = inset
+        bar.setBottomInset(inset)
+        bar.includesSafeArea = false
+        // Lay out now so the frame that is about to render already has the bar in place.
+        bar.superview?.layoutIfNeeded()
+      }
+      publishInset(inset * screen.scale)
+      return viewRect.maxY - inset
     }
 
+    // Classic path: the plugin's input accessory view is the band.
+    guard let accessoryView = activeInputAccessoryViews.first(where: { $0.window != nil }) else {
+      return nil
+    }
+    let bandRect = liveScreenRect(of: accessoryView, in: screen)
+    // A floating keyboard has no inset in the engine, so it must not be driven here either.
+    guard KeyboardGeometry.isDockedBand(bandWidth: bandRect.width, viewWidth: viewRect.width)
+    else {
+      return nil
+    }
     let bandBottom = bandRect.maxY
-    let inset = KeyboardGeometry.inset(
-      bandBottom: bandBottom,
-      viewBottom: viewRect.maxY,
-      scale: screen.scale
+    publishInset(
+      KeyboardGeometry.inset(
+        bandBottom: bandBottom,
+        viewBottom: viewRect.maxY,
+        scale: screen.scale
+      )
     )
+    return bandBottom
+  }
 
-    guard inset != lastReportedInset else { return bandBottom }
+  /// Writes the bottom inset of the engine, in physical pixels.
+  private func publishInset(_ inset: CGFloat) {
+    guard inset != lastReportedInset else { return }
     lastReportedInset = inset
     // Stop the engine's own inset animation, if one is in flight, only now that there is a value to
     // put in its place: while the plugin follows the finger the engine must not animate its own
@@ -466,9 +454,8 @@ class KeyboardManager {
     syncEngineTargetInset(inset)
     CIKTrace.log(
       "inset",
-      "band=\(CIKTrace.points(bandBottom)) inset=\(CIKTrace.points(inset)) engine=\(CIKTrace.points(readPhysicalViewInsetBottom()))"
+      "inset=\(CIKTrace.points(inset)) engine=\(CIKTrace.points(readPhysicalViewInsetBottom()))"
     )
-    return bandBottom
   }
 
   /// Writes the bottom view inset of the engine, in physical pixels.

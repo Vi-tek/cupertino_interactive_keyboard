@@ -60,6 +60,58 @@ expect(
   "the inset never becomes negative"
 )
 
+// The notification target is clamped into the view.
+expect(
+  KeyboardGeometry.barInset(bandBottom: 844 - 336, viewHeight: 844),
+  336,
+  "a docked keyboard's band gives the keyboard height as the bar inset"
+)
+
+expect(
+  KeyboardGeometry.barInset(bandBottom: 900, viewHeight: 844),
+  0,
+  "a band below the view puts the bar at the view bottom"
+)
+
+expect(
+  KeyboardGeometry.barInset(bandBottom: -40, viewHeight: 844),
+  844,
+  "a band above the view cannot push the bar past the view top"
+)
+
+// The drag inset follows the guide's delta, so a stale guide does not offset the gesture.
+expect(
+  KeyboardGeometry.dragBarInset(
+    insetAtStart: 300, guideTopAtStart: 508, guideTop: 508, maxInset: 844
+  ),
+  300,
+  "a still guide keeps the inset the drag started with"
+)
+
+expect(
+  KeyboardGeometry.dragBarInset(
+    insetAtStart: 300, guideTopAtStart: 508, guideTop: 548, maxInset: 844
+  ),
+  260,
+  "dragging the keyboard down by 40 shrinks the inset by 40"
+)
+
+expect(
+  KeyboardGeometry.dragBarInset(
+    insetAtStart: 300, guideTopAtStart: 508, guideTop: 900, maxInset: 844
+  ),
+  0,
+  "an inset never goes negative"
+)
+
+expect(
+  KeyboardGeometry.dragBarInset(
+    insetAtStart: 300, guideTopAtStart: 508, guideTop: 300, maxInset: 844
+  ),
+  508,
+  "an inset never grows past the view top"
+)
+
 // The release target: the keyboard's top edge becomes the band's bottom edge.
 expect(
   KeyboardGeometry.releaseBandBottom(keyboardTop: 844 - 336, viewBottom: 844),
