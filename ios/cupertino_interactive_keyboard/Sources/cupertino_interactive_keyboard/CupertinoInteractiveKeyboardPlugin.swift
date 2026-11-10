@@ -13,6 +13,10 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     CIKTrace.sink = { [weak instance] line in
       instance?.channel?.invokeMethod("trace", arguments: ["line": line])
     }
+    // The app can react to the interactive drag itself, not only to the inset changing.
+    KeyboardManager.shared.onKeyboardDraggingChanged = { [weak instance] dragging in
+      instance?.channel?.invokeMethod("keyboardDragging", arguments: ["dragging": dragging])
+    }
     registrar.publish(instance)
     registrar.addMethodCallDelegate(instance, channel: channel)
   }
@@ -399,6 +403,7 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
   }
   
   public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
+    KeyboardManager.shared.onKeyboardDraggingChanged = nil
     KeyboardManager.shared.stopInteractiveTracking()
     tearDownHostedAccessory()
     scrollView.scrollabeRects = [:]

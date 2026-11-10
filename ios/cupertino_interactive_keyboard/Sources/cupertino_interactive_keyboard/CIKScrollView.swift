@@ -29,6 +29,9 @@ class CIKScrollView: UIScrollView, UIGestureRecognizerDelegate {
       // Start tracking before the keyboard moves, then push the live position on every change.
       KeyboardManager.shared.startTrackingIfKeyboardVisible()
       KeyboardManager.shared.keyboardDragDidChange()
+    case .ended, .cancelled, .failed:
+      // The finger is off the screen: the keyboard may still animate back, but the drag is over.
+      KeyboardManager.shared.keyboardDragDidEnd()
     default:
       break
     }

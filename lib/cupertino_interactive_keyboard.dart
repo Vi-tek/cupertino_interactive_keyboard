@@ -1,10 +1,23 @@
 import 'package:cupertino_interactive_keyboard/src/cupertino_interactive_keyboard_platform_interface.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 export 'cupertino_accessory.dart';
 export 'src/cupertino_hosted_input_accessory.dart';
 export 'src/cupertino_input_accessory.dart';
 export 'src/cupertino_interactive_keyboard.dart';
+
+/// Whether the keyboard is being dragged down right now.
+///
+/// True from the moment the interactive dismissal gesture starts moving the keyboard until the
+/// finger is released, before the keyboard animates back or away. Listen to it to react to the
+/// gesture (an overlay, a scroll indicator, a paused animation), or read its
+/// [ValueListenable.value] for the current state.
+///
+/// It is a package-level value, not a widget: it is the same everywhere, even outside the widget
+/// tree. iOS only - it stays false on platforms without the interactive keyboard.
+ValueListenable<bool> get isKeyboardDragging =>
+    CupertinoInteractiveKeyboardPlatform.instance.isKeyboardDragging;
 
 /// Turns the plugin's native DEBUG trace on or off for this run.
 ///

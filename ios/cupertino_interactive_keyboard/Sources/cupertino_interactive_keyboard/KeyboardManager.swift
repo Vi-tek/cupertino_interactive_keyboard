@@ -71,6 +71,35 @@ class KeyboardManager {
   /// Whether the interactive drag is currently driving the inset.
   var isTrackingKeyboard: Bool { interactiveTrackingDisplayLink != nil }
 
+  /// Called on the main thread when the interactive drag starts and when it is released.
+  var onKeyboardDraggingChanged: ((Bool) -> Void)?
+  private var reportedKeyboardDragging = false
+  private var bandBottomAtDragStart: CGFloat?
+
+  /// Publishes the drag state to Dart, once per transition.
+  ///
+  /// A drag starts when the keyboard first follows the finger and ends when the finger is lifted:
+  /// the tracking can outlive the gesture while the keyboard animates back into place.
+  private func reportKeyboardDragging(_ dragging: Bool) {
+    guard reportedKeyboardDragging != dragging else { return }
+    reportedKeyboardDragging = dragging
+    onKeyboardDraggingChanged?(dragging)
+  }
+
+  /// Reports the drag as started once the keyboard actually follows the finger.
+  ///
+  /// A scroll over the interactive area starts the tracking too, but leaves the keyboard where it
+  /// is; the drag begins when the keyboard leaves the position it had when the tracking started.
+  private func reportKeyboardDraggingIfMoved(_ bandBottom: CGFloat?) {
+    guard let bandBottom else { return }
+    guard let bandBottomAtDragStart else {
+      self.bandBottomAtDragStart = bandBottom
+      return
+    }
+    guard isDraggingKeyboard, abs(bandBottom - bandBottomAtDragStart) > 0.5 else { return }
+    reportKeyboardDragging(true)
+  }
+
   // MARK: - Interactive dismissal
 
   /// Whether the user is currently dragging the keyboard away.
@@ -176,7 +205,7 @@ class KeyboardManager {
     // position is written here as well: a write from the deferred block below can miss the frame
     // that is about to start, and the missed frame is the visible correction at the start of a
     // drag.
-    syncInset()
+    reportKeyboardDraggingIfMoved(syncInset())
     guard !isInsetSyncScheduled else { return }
     isInsetSyncScheduled = true
     DispatchQueue.main.async { [weak self] in
@@ -186,6 +215,14 @@ class KeyboardManager {
       guard self.interactiveTrackingDisplayLink != nil else { return }
       self.syncInset()
     }
+  }
+
+  /// Called from the pan gesture when the finger is lifted.
+  ///
+  /// The tracking can outlive the gesture while the keyboard animates back into place, so the drag
+  /// state ends with the gesture, not with the tracking.
+  func keyboardDragDidEnd() {
+    reportKeyboardDragging(false)
   }
 
   /// Seeds the bar inset when the bar is created while the keyboard is already open, so the first
@@ -228,6 +265,7 @@ class KeyboardManager {
     missingBandTicks = 0
     isInsetSyncScheduled = false
     invalidatedEngineAnimation = false
+    bandBottomAtDragStart = nil
 
     let displayLink = CADisplayLink(target: self, selector: #selector(trackInteractiveKeyboard))
     displayLink.add(to: .main, forMode: .common)
@@ -248,6 +286,7 @@ class KeyboardManager {
     missingBandTicks = 0
     isInsetSyncScheduled = false
     invalidatedEngineAnimation = false
+    reportKeyboardDragging(false)
   }
 
   /// Moves the bar onto the keyboard's end position for a keyboard notification.
@@ -442,6 +481,7 @@ class KeyboardManager {
   private func trackInteractiveKeyboard() {
     trackingTicks += 1
     let bandBottom = syncInset()
+    reportKeyboardDraggingIfMoved(bandBottom)
     traceInteractiveFrame()
 
     // The band left the screen: there is nothing left to follow.

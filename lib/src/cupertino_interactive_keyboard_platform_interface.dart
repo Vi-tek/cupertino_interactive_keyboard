@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:cupertino_interactive_keyboard/cupertino_interactive_keyboard_platform_interface.dart';
+import 'package:flutter/foundation.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 abstract class CupertinoInteractiveKeyboardPlatform extends PlatformInterface {
@@ -25,6 +26,19 @@ abstract class CupertinoInteractiveKeyboardPlatform extends PlatformInterface {
     _instance = instance;
   }
 
+  final ValueNotifier<bool> _isKeyboardDragging = ValueNotifier(false);
+
+  /// Whether the interactive keyboard is being dragged down right now.
+  ///
+  /// True from the moment the drag starts moving the keyboard until the finger is released,
+  /// before the keyboard animates back or away.
+  ValueListenable<bool> get isKeyboardDragging => _isKeyboardDragging;
+
+  /// The writable side of [isKeyboardDragging], for implementations that receive the state
+  /// natively.
+  @protected
+  ValueNotifier<bool> get keyboardDraggingState => _isKeyboardDragging;
+
   Future<bool?> initialize({required bool firstTime}) {
     throw UnimplementedError('initialize() has not been implemented.');
   }
@@ -33,7 +47,6 @@ abstract class CupertinoInteractiveKeyboardPlatform extends PlatformInterface {
   Future<void> setTraceEnabled(bool enabled) {
     throw UnimplementedError('setTraceEnabled() has not been implemented.');
   }
-
 
   Future<void> setScrollableRect(int id, Rect rect) {
     throw UnimplementedError('setScrollableRect() has not been implemented.');

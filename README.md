@@ -250,6 +250,10 @@ Column(
 - `CupertinoInteractiveKeyboard({required Widget child})` — the area where the interactive
   keyboard dismissal is enabled; put your scrollable inside.
 - `CupertinoInputAccessory({required Widget child})` — the classic in-app bar.
+- `isKeyboardDragging` — a package-level `ValueListenable<bool>` for the interactive dismissal
+  gesture: true while the drag moves the keyboard, false the moment the finger is released (before
+  the keyboard animates back or away). Use it from anywhere, e.g. a `ValueListenableBuilder` over
+  an overlay.
 - `setKeyboardTraceEnabled(bool enabled)` — the DEBUG-only pacing trace (native lines plus the Dart
   `viewInsets` half), for a `flutter run` session.
 

@@ -27,7 +27,6 @@ class MethodChannelCupertinoInteractiveKeyboard
     return methodChannel.invokeMethod('setTraceEnabled', {'enabled': enabled});
   }
 
-
   @override
   Future<bool?> initialize({required bool firstTime}) async {
     return methodChannel.invokeMethod<bool>('initialize', {
@@ -127,6 +126,9 @@ class MethodChannelCupertinoInteractiveKeyboard
           'type': 'height',
           'height': (arguments['height'] as num).toDouble(),
         });
+        return Future.value();
+      case 'keyboardDragging':
+        keyboardDraggingState.value = arguments['dragging'] as bool? ?? false;
         return Future.value();
       case 'hostedAccessoryReady':
         _hostedAccessoryEvents.add({'type': 'ready'});

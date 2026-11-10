@@ -79,6 +79,13 @@ class MockCupertinoInteractiveKeyboard
     return Future.value();
   }
 
+  /// Emits the interactive drag state as the method channel implementation would.
+  void emitKeyboardDragging(bool dragging) {
+    if (keyboardDraggingState.value != dragging) {
+      keyboardDraggingState.value = dragging;
+    }
+  }
+
   @override
   Future<bool?> initialize({required bool firstTime}) {
     if (firstTime) {

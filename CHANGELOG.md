@@ -1,3 +1,9 @@
+## Unreleased
+
+* `isKeyboardDragging`: a package-level `ValueListenable<bool>` that turns true while the interactive
+  dismissal gesture drags the keyboard and false the moment the finger is released, before the
+  keyboard animates back or away.
+
 ## 1.1.1 - A transparent bar you can hide
 
 * The hosted bar's native container and the accessory engine's view are transparent: the bar shows

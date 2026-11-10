@@ -4,6 +4,7 @@ import 'package:cupertino_interactive_keyboard/cupertino_interactive_keyboard.da
 import 'package:cupertino_interactive_keyboard/cupertino_interactive_keyboard_platform_interface.dart';
 import 'package:cupertino_interactive_keyboard/src/interactive_keyboard_scroll_physics.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
@@ -258,6 +259,43 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
+
+  test('updates the public drag state from the native channel call', () async {
+    final implementation = MethodChannelCupertinoInteractiveKeyboard();
+    final changes = <bool>[];
+    implementation.isKeyboardDragging.addListener(
+      () => changes.add(implementation.isKeyboardDragging.value),
+    );
+
+    Future<void> nativeCall(String method, Object? arguments) async {
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+        'cupertino_interactive_keyboard',
+        const StandardMethodCodec().encodeMethodCall(
+          MethodCall(method, arguments),
+        ),
+        (_) {},
+      );
+    }
+
+    await nativeCall('keyboardDragging', {'dragging': true});
+    expect(implementation.isKeyboardDragging.value, isTrue);
+    await nativeCall('keyboardDragging', {'dragging': false});
+    expect(implementation.isKeyboardDragging.value, isFalse);
+    expect(changes, [true, false]);
+  });
+
+  test('exposes the drag state through the public getter', () {
+    expect(isKeyboardDragging.value, isFalse);
+    final changes = <bool>[];
+    isKeyboardDragging.addListener(() => changes.add(isKeyboardDragging.value));
+
+    plugin.emitKeyboardDragging(true);
+    expect(isKeyboardDragging.value, isTrue);
+    plugin.emitKeyboardDragging(false);
+    expect(isKeyboardDragging.value, isFalse);
+    expect(changes, [true, false]);
+  });
 
   testWidgets(
     'does not register platform height or scrollable rect on non-iOS platforms',
