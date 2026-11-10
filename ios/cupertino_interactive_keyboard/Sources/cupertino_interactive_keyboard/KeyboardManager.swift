@@ -206,7 +206,7 @@ class KeyboardManager {
     bar.layer.removeAllAnimations()
     bar.setBottomInset(visibleInset)
     if visibleInset > 0.5 {
-      bar.includesSafeArea = false
+      bar.contentPadding = 0
     }
     UIView.performWithoutAnimation {
       superview.layoutIfNeeded()
@@ -216,6 +216,8 @@ class KeyboardManager {
 
   private func startInteractiveTracking() {
     guard interactiveTrackingDisplayLink == nil else { return }
+    ownedHideLink?.invalidate()
+    ownedHideLink = nil
     freezeBarAtVisiblePosition()
     barInsetAtDragStart = barInset
     guideTopAtDragStart = guideTopInView()
@@ -271,24 +273,22 @@ class KeyboardManager {
     applyKeyboardNotification(notification)
   }
 
-  private func applyKeyboardNotification(_ notification: Notification) {
+  /// The bar inset a keyboard notification ends at, or nil when the view is not usable.
+  private func hostedTargetInset(_ notification: Notification) -> (points: CGFloat, hidden: Bool)? {
     guard
       let flutterViewController,
       let flutterView = flutterViewController.view,
       let window = flutterView.window
     else {
-      return
+      return nil
     }
-    let info = notification.userInfo
-    guard let endFrame = (info?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+    guard
+      let endFrame = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?
+        .cgRectValue
     else {
-      return
+      return nil
     }
-    let duration =
-      (info?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
-    let curve = (info?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 7
-    let screen = window.screen
-    let viewRect = liveScreenRect(of: flutterView, in: screen)
+    let viewRect = liveScreenRect(of: flutterView, in: window.screen)
     // A hidden, empty or floating keyboard leaves no band, so the bar belongs at the view's bottom.
     let hidden =
       notification.name == UIResponder.keyboardWillHideNotification
@@ -299,7 +299,16 @@ class KeyboardManager {
         keyboardTop: hidden ? nil : endFrame.minY,
         viewBottom: viewRect.maxY
       ) - viewRect.minY
-    let targetInset = KeyboardGeometry.barInset(bandBottom: bandBottom, viewHeight: viewRect.height)
+    return (KeyboardGeometry.barInset(bandBottom: bandBottom, viewHeight: viewRect.height), hidden)
+  }
+
+  private func applyKeyboardNotification(_ notification: Notification) {
+    guard let target = hostedTargetInset(notification) else { return }
+    let info = notification.userInfo
+    let duration =
+      (info?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
+    let curve = (info?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 7
+    let targetInset = target.points
     let includesSafeArea = targetInset <= 0.5
     barInset = targetInset
     CIKTrace.log(
@@ -311,21 +320,107 @@ class KeyboardManager {
     )
 
     guard let bar = hostedAccessoryBar, bar.window != nil else { return }
+    // The bottom moves with the notification's own animation; the padding is part of the same
+    // motion so the composer lands above the home indicator instead of being pushed up later.
+    let targetPadding = includesSafeArea ? bar.restingPadding : 0
+    if abs(bar.contentPadding - targetPadding) > 0.05 {
+      bar.heightAnimation = (max(duration, 0.2), curve)
+    }
     let animations = {
       bar.setBottomInset(targetInset)
-      bar.includesSafeArea = includesSafeArea
+      bar.contentPadding = targetPadding
       bar.superview?.layoutIfNeeded()
     }
-    guard duration > 0 else {
+    if duration > 0 {
+      UIView.animate(
+        withDuration: duration,
+        delay: 0,
+        options: UIView.AnimationOptions(rawValue: curve << 16),
+        animations: animations
+      )
+    } else {
       UIView.performWithoutAnimation(animations)
+    }
+  }
+
+  // MARK: - Instant hides
+
+  private var ownedHideLink: CADisplayLink?
+  private var ownedHideStartInset: CGFloat = 0
+  private var ownedHideTargetInset: CGFloat = 0
+  private var ownedHideStartTime: CFTimeInterval = 0
+  private var ownedHidePadding: CGFloat?
+  private let ownedHideDuration: Double = 0.25
+
+  /// Whether the plugin should run a collapsing transition itself instead of letting the engine take it.
+  ///
+  /// A notification with a zero duration makes the engine write the end inset in one frame (its
+  /// "hide immediately" path for a zero-duration hide, and a zero-length animation for a frame
+  /// change). While the keyboard still animates away that snaps the whole app content by the
+  /// keyboard height, so the plugin animates the inset down itself for any instant collapse.
+  func ownsInstantCollapse(_ notification: Notification) -> Bool {
+    guard hostedAccessoryBar != nil, !isIgnoredByEngine(notification) else { return false }
+    let duration =
+      (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?
+      .doubleValue ?? 0
+    guard duration <= 0 else { return false }
+    guard let target = hostedTargetInset(notification), let window = hostedAccessoryBar?.window
+    else {
+      return false
+    }
+    let current = (readPhysicalViewInsetBottom() ?? 0) / window.screen.scale
+    return target.points < current - 1
+  }
+
+  /// Takes the inset down to the notification's target over the keyboard's usual duration, with the
+  /// padding growing over the last 34 pt so the composer settles without a late push.
+  ///
+  /// Both Flutter view controllers see the notification; only the first one runs the transition.
+  func ownedCollapseTransition(_ notification: Notification) {
+    guard ownedHideLink == nil else { return }
+    guard let target = hostedTargetInset(notification), let bar = hostedAccessoryBar,
+      let window = bar.window
+    else {
       return
     }
-    UIView.animate(
-      withDuration: duration,
-      delay: 0,
-      options: UIView.AnimationOptions(rawValue: curve << 16),
-      animations: animations
-    )
+    let current = (readPhysicalViewInsetBottom() ?? 0) / window.screen.scale
+    guard current > target.points + 1 else { return }
+    invalidateEngineAnimation()
+    ownedHideLink?.invalidate()
+    ownedHideStartInset = current
+    ownedHideTargetInset = target.points
+    ownedHideStartTime = CACurrentMediaTime()
+    ownedHidePadding = bar.restingPadding
+    let link = CADisplayLink(target: self, selector: #selector(tickOwnedCollapse))
+    link.add(to: .main, forMode: .common)
+    ownedHideLink = link
+  }
+
+  @objc
+  private func tickOwnedCollapse() {
+    guard let bar = hostedAccessoryBar, let flutterView = bar.superview else {
+      ownedHideLink?.invalidate()
+      ownedHideLink = nil
+      return
+    }
+    let t = min(1, max(0, (CACurrentMediaTime() - ownedHideStartTime) / ownedHideDuration))
+    let eased = t * t * (3 - 2 * t)
+    let inset = ownedHideStartInset + (ownedHideTargetInset - ownedHideStartInset) * eased
+    let padding = max(0, (ownedHidePadding ?? 0) - inset)
+    barInset = inset
+    bar.setBottomInset(inset)
+    bar.contentPadding = padding
+    UIView.performWithoutAnimation {
+      flutterView.layoutIfNeeded()
+    }
+    publishInset(inset * (bar.window?.screen.scale ?? 1))
+    guard t >= 1 else { return }
+    ownedHideLink?.invalidate()
+    ownedHideLink = nil
+    barInset = ownedHideTargetInset
+    bar.setBottomInset(ownedHideTargetInset)
+    bar.contentPadding = max(0, (ownedHidePadding ?? 0) - ownedHideTargetInset)
+    ownedHidePadding = nil
   }
 
   /// The keyboard layout guide's top in the Flutter view's coordinates, while it is live.
@@ -347,6 +442,7 @@ class KeyboardManager {
   private func trackInteractiveKeyboard() {
     trackingTicks += 1
     let bandBottom = syncInset()
+    traceInteractiveFrame()
 
     // The band left the screen: there is nothing left to follow.
     missingBandTicks = bandBottom == nil ? missingBandTicks + 1 : 0
@@ -409,10 +505,13 @@ class KeyboardManager {
       } else {
         inset = barInset
       }
-      if abs(inset - barInset) > 0.5 {
+      // The content lifts out of the home-indicator strip as the bar reaches the bottom, instead of
+      // being pushed up after the keyboard is gone.
+      let padding = max(0, bar.restingPadding - inset)
+      if abs(inset - barInset) > 0.5 || abs(padding - bar.contentPadding) > 0.5 {
         barInset = inset
         bar.setBottomInset(inset)
-        bar.includesSafeArea = false
+        bar.contentPadding = padding
         // Lay out now so the frame that is about to render already has the bar in place.
         bar.superview?.layoutIfNeeded()
       }
@@ -439,6 +538,25 @@ class KeyboardManager {
       )
     )
     return bandBottom
+  }
+
+  /// Logs one pacing line per display-link tick while the keyboard is dragged.
+  ///
+  /// The native half of the probe: what the engine has, what the bar is drawn at, and where the
+  /// guide is. Pair it with the Dart "metrics" line to see the frame the list is laid out in.
+  private func traceInteractiveFrame() {
+    guard hostedAccessoryBar?.window != nil else { return }
+    let refresh = interactiveTrackingDisplayLink.map { $0.targetTimestamp - $0.timestamp } ?? 0
+    CIKTrace.log(
+      "frame",
+      "epoch=" + CIKTrace.seconds(Date().timeIntervalSince1970 * 1000)
+        + " t=" + CIKTrace.seconds(CACurrentMediaTime())
+        + " refresh=" + CIKTrace.seconds(refresh)
+        + " inset=" + CIKTrace.points(readPhysicalViewInsetBottom())
+        + " bar=" + CIKTrace.points(hostedAccessoryBar?.frame.maxY)
+        + " barShown=" + CIKTrace.points(hostedAccessoryBar?.layer.presentation()?.frame.maxY)
+        + " guideTop=" + CIKTrace.points(guideTopInView())
+    )
   }
 
   /// Writes the bottom inset of the engine, in physical pixels.
@@ -523,9 +641,15 @@ class KeyboardManager {
     insetManager.setValue(inset, forKey: "targetViewInsetBottom")
   }
 
-  /// Stops the engine's own inset animation once the plugin is about to write its own value.
+  /// Stops the engine's own inset animation once per tracking session, before the plugin's writes.
   private func invalidateEngineAnimationIfNeeded() {
     guard !invalidatedEngineAnimation else { return }
+    invalidatedEngineAnimation = true
+    invalidateEngineAnimation()
+  }
+
+  /// Stops the engine's own inset animation, if one is in flight.
+  private func invalidateEngineAnimation() {
     guard
       let flutterViewController,
       flutterViewController.responds(to: NSSelectorFromString("keyboardInsetManager")),
@@ -538,7 +662,6 @@ class KeyboardManager {
       logMissingEngineAPI("invalidateKeyboardAnimationVSyncClient")
       return
     }
-    invalidatedEngineAnimation = true
     insetManager.perform(NSSelectorFromString("invalidateKeyboardAnimationVSyncClient"))
   }
 

@@ -42,29 +42,40 @@ struct NativeAccessoryConfig {
 /// The hosted Flutter view is pinned to the bar's top with the *content* height alone, so the
 /// home-indicator padding the bar carries at rest never stretches the app's composer.
 class CIKHostedAccessoryBar: UIView {
-  /// Called with the bar's total height whenever it changes, safe area included.
-  var onHeightChange: ((CGFloat) -> Void)?
+  /// Called with the bar's total height whenever it changes, safe area included, along with the
+  /// animation the app's reserved height should use to follow it (0, 0 for an instant change).
+  var onHeightChange: ((_ height: CGFloat, _ duration: Double, _ curve: UInt) -> Void)?
+
+  /// The animation to report with the next height change.
+  var heightAnimation: (duration: Double, curve: UInt) = (0, 0)
 
   /// The height the bar's Flutter content asked for, safe area excluded.
   private(set) var contentHeight: CGFloat = 56
 
-  /// Whether the home-indicator inset is part of the bar's height.
+  /// The padding the bar carries below its content.
   ///
-  /// Only at rest: while the keyboard is on screen the bar sits on it and no padding is needed.
-  var includesSafeArea = false {
+  /// It is the home-indicator inset while the bar is at rest and 0 while the keyboard is on screen.
+  /// The plugin interpolates it during a dismissal, so the composer lands above the indicator with
+  /// the keyboard's own motion instead of being pushed up after the keyboard is gone.
+  var contentPadding: CGFloat = 0 {
     didSet {
-      guard includesSafeArea != oldValue else { return }
+      guard abs(contentPadding - oldValue) > 0.05 else { return }
       updateLayoutIfNeeded()
     }
   }
 
-  /// The bar's total height, safe area included.
+  /// The home-indicator inset the bar carries at rest.
+  var restingPadding: CGFloat { superview?.safeAreaInsets.bottom ?? 0 }
+
+  /// The bar's total height, padding included.
   var barHeight: CGFloat {
     KeyboardGeometry.hostedAccessoryHeight(
       contentHeight: contentHeight,
-      safeAreaBottom: includesSafeArea ? (superview?.safeAreaInsets.bottom ?? 0) : 0
+      safeAreaBottom: contentPadding
     )
   }
+
+
 
   private lazy var heightConstraint = heightAnchor.constraint(equalToConstant: 0)
   private var bottomConstraint: NSLayoutConstraint?
@@ -136,7 +147,9 @@ class CIKHostedAccessoryBar: UIView {
     let height = barHeight
     guard abs(height - heightConstraint.constant) > 0.5 else { return }
     heightConstraint.constant = height
-    onHeightChange?(height)
+    let animation = heightAnimation
+    heightAnimation = (0, 0)
+    onHeightChange?(height, animation.duration, animation.curve)
   }
 
   /// Logs the bar's geometry against the guide, change-only and only while the trace is enabled.
@@ -151,7 +164,7 @@ class CIKHostedAccessoryBar: UIView {
     }
     CIKTrace.log(
       "bar",
-      "bottom=\(CIKTrace.points(bottom)) height=\(CIKTrace.points(bounds.height)) inset=\(CIKTrace.points(superview.map { $0.bounds.height - bottom })) guideTop=\(CIKTrace.points(guideTop)) padding=\(CIKTrace.points(includesSafeArea ? superview?.safeAreaInsets.bottom : 0))"
+      "bottom=\(CIKTrace.points(bottom)) height=\(CIKTrace.points(bounds.height)) inset=\(CIKTrace.points(superview.map { $0.bounds.height - bottom })) guideTop=\(CIKTrace.points(guideTop)) padding=\(CIKTrace.points(contentPadding))"
     )
   }
 }

@@ -10,6 +10,9 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     let channel = FlutterMethodChannel(name: "cupertino_interactive_keyboard", binaryMessenger: registrar.messenger())
     let instance = CupertinoInteractiveKeyboardPlugin()
     instance.channel = channel
+    CIKTrace.sink = { [weak instance] line in
+      instance?.channel?.invokeMethod("trace", arguments: ["line": line])
+    }
     registrar.publish(instance)
     registrar.addMethodCallDelegate(instance, channel: channel)
   }
@@ -37,6 +40,13 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
   
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
+    case "setTraceEnabled":
+      guard let enabled = (call.arguments as? [String: Any])?["enabled"] as? Bool else {
+        return result(FlutterMethodNotImplemented)
+      }
+      CIKTrace.setEnabled(enabled)
+      result(nil)
+
     case "initialize":
       guard
         let args = call.arguments as? [String: Any],
@@ -242,11 +252,15 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
       initialInset = 0
     }
     bar.attach(to: flutterView, bottomInset: initialInset)
-    bar.includesSafeArea = initialInset <= 0.5
+    bar.contentPadding = initialInset <= 0.5 ? bar.restingPadding : 0
     KeyboardManager.shared.trackBarInset(initialInset)
     
-    bar.onHeightChange = { [weak self] height in
-      self?.channel?.invokeMethod("hostedAccessoryHeight", arguments: ["height": Double(height)])
+    bar.onHeightChange = { [weak self] height, duration, curve in
+      self?.channel?.invokeMethod("hostedAccessoryHeight", arguments: [
+        "height": Double(height),
+        "duration": duration,
+        "curve": curve,
+      ])
     }
     
     let project = FlutterDartProject()

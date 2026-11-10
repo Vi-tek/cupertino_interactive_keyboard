@@ -29,6 +29,12 @@ abstract class CupertinoInteractiveKeyboardPlatform extends PlatformInterface {
     throw UnimplementedError('initialize() has not been implemented.');
   }
 
+  /// Enables or disables the native DEBUG trace (no-op in release builds).
+  Future<void> setTraceEnabled(bool enabled) {
+    throw UnimplementedError('setTraceEnabled() has not been implemented.');
+  }
+
+
   Future<void> setScrollableRect(int id, Rect rect) {
     throw UnimplementedError('setScrollableRect() has not been implemented.');
   }

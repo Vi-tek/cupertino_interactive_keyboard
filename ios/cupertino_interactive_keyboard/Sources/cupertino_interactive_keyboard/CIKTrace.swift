@@ -2,13 +2,17 @@ import Foundation
 import QuartzCore
 import UIKit
 
-/// The DEBUG-only trace that confirms the keyboard release mechanism on device.
+/// The DEBUG-only trace that confirms the keyboard pacing on device.
 ///
-/// The file stays linked into release builds, but nothing is evaluated there: [isEnabled] is false
-/// and every call site guards on it, with the message built lazily. It is off by default even in a
-/// debug build (synchronous logging per keyboard frame costs the pacing it measures) and is enabled
-/// for a run with `-CIKTrace YES`.
+/// Off by default. The app turns it on with `setKeyboardTraceEnabled(true)` from Dart (see the
+/// plugin's public helper), which forwards every line to the Dart console, so a `flutter run`
+/// session shows them. Release builds ignore the override.
 enum CIKTrace {
+  /// Forwards each line to the main isolate, which prints it to the Dart console.
+  static var sink: ((String) -> Void)?
+
+  private static var overrideEnabled: Bool?
+
   /// Whether this binary is a debug build.
   ///
   /// Plain SwiftPM builds do not define the `DEBUG` compilation condition, so `assert` decides
@@ -19,20 +23,20 @@ enum CIKTrace {
     return isDebug
   }()
 
-  /// Whether the trace should log.
-  ///
-  /// Off unless the app was launched with `-CIKTrace YES`: launch arguments reach UserDefaults as
-  /// strings, so the value is parsed with `bool(forKey:)`.
-  static let isEnabled: Bool = {
-    guard isDebugBuild else { return false }
-    let defaults = UserDefaults.standard
-    guard defaults.object(forKey: "CIKTrace") != nil else { return false }
-    return defaults.bool(forKey: "CIKTrace")
-  }()
+  /// Whether the trace is on: only a debug build, and only when the app asked for it.
+  static var isEnabled: Bool {
+    overrideEnabled == true && isDebugBuild
+  }
+
+  /// Enables or disables the trace for this run.
+  static func setEnabled(_ enabled: Bool) {
+    overrideEnabled = isDebugBuild ? enabled : false
+  }
 
   static func log(_ tag: String, _ message: @autoclosure () -> String) {
     guard isEnabled else { return }
-    NSLog("[CIKTrace] t=%.4f %@ %@", CACurrentMediaTime(), tag, message())
+    let line = "[CIKTrace] " + tag + " " + message()
+    sink?(line)
   }
 
   static func points(_ value: CGFloat?) -> String {

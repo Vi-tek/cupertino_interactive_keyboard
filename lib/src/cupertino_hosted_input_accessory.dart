@@ -82,6 +82,10 @@ class _CupertinoKeyboardAccessoryState
   /// The total bar height reported by native, including the bottom safe area.
   double? _reportedHeight;
 
+  /// How the reserved height should follow the next native height change.
+  int _heightDurationMs = 0;
+  int _heightCurve = 0;
+
   bool get _isIOS => defaultTargetPlatform == TargetPlatform.iOS;
 
   @override
@@ -132,10 +136,30 @@ class _CupertinoKeyboardAccessoryState
     if (!_isIOS) {
       return const SizedBox.shrink();
     }
-    return SizedBox(
-      height: _reportedHeight ??
-          ((widget.height ?? 56) + MediaQuery.paddingOf(context).bottom),
+    final target = _reportedHeight ??
+        ((widget.height ?? 56) + MediaQuery.paddingOf(context).bottom);
+    // The native bar animates its own height when the keyboard state changes; the reservation
+    // follows with the same timing, so the list edge never races the bar (a one-frame 34 pt step
+    // reads as a clipped line and a gap).
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(end: target),
+      duration: Duration(milliseconds: _heightDurationMs),
+      curve: _curveFor(_heightCurve),
+      builder: (context, height, _) => SizedBox(height: height),
     );
+  }
+
+  Curve _curveFor(int curve) {
+    switch (curve) {
+      case 1:
+        return Curves.easeIn;
+      case 2:
+        return Curves.easeOut;
+      case 3:
+        return Curves.linear;
+      default:
+        return Curves.easeInOut;
+    }
   }
 
   Future<void> _create() async {
@@ -149,7 +173,10 @@ class _CupertinoKeyboardAccessoryState
     if (!mounted || height == null) {
       return;
     }
-    setState(() => _reportedHeight = height);
+    setState(() {
+      _reportedHeight = height;
+      _heightDurationMs = 0;
+    });
   }
 
   void _handleEvent(Map<String, Object?> event) {
@@ -159,9 +186,15 @@ class _CupertinoKeyboardAccessoryState
     switch (event['type']) {
       case 'height':
         final height = (event['height'] as num?)?.toDouble();
-        if (height != null) {
-          setState(() => _reportedHeight = height);
+        if (height == null) {
+          break;
         }
+        final duration = (event['duration'] as num?)?.toDouble() ?? 0;
+        setState(() {
+          _reportedHeight = height;
+          _heightDurationMs = (duration * 1000).round().clamp(0, 600);
+          _heightCurve = (event['curve'] as num?)?.toInt() ?? 0;
+        });
         break;
       case 'ready':
         _controller.onReady?.call();

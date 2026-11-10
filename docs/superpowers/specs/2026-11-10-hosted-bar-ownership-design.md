@@ -108,3 +108,31 @@ The causes are now known and structural:
 - The measuring widget's child contract (content must be intrinsically sized; no `Expanded` against
   the unbounded axis) — documented in the README.
 - Thresholds (0.5 pt) and trace formatting.
+
+## Addendum (device logs, same day): instant hides and the reserved-height race
+
+The device trace showed two distinct failures that the ownership work does not by itself remove:
+
+1. A hide with duration == 0 takes the engine's "hide immediately" path: FlutterKeyboardInsetManager writes inset 0 in one frame while the keyboard still animates away. The log shows insets 329.6 -> 0 and listH 299.8 -> 595.5 in one step. The plugin now recognises that notification before the engine sees it (ownsInstantHide), skips the engine handler and animates the inset down itself over the keyboard's usual 0.25 s with the same curve that moves the bar.
+2. The reserved height stepped 34 pt at the start of a transition, while the native bar's height was still animating: the log shows the single reported bar height=98.5 at the start of the close and listH dropping 34 pt at that instant. Now the home-indicator padding is applied only once the keyboard is gone, and the height event carries the bar's animation duration/curve so the Flutter reservation animates with the bar (TweenAnimationBuilder) instead of jumping.
+
+Verified here: geometry checks, flutter test (18), flutter analyze (4 pre-existing infos), iOS simulator build. Device run still required for pacing.
+
+### Follow-up: no push-up at the end of a collapse
+
+The home-indicator padding is no longer applied after the keyboard is gone (the delayed 0.2 s lift).
+It is part of the motion instead: during a drag or an instant hide the padding is
+max(0, restingPadding - barInset), so the composer's content reaches its resting place while the
+keyboard is still sliding down behind it; in notification-driven transitions it is interpolated over
+the notification's duration and curve together with the bar's bottom. The reservation animation
+stays in sync, so the list edge and the bar's top keep matching frame for frame.
+
+### Follow-up: the bar mirrors the engine's live inset
+
+The list's motion is the Scaffold body following viewInsets; the accessory used to move on its own
+UIView.animate curve, so at every handoff the two producers disagreed (the list appeared to lag or
+jump). The bar's position is now a pure function of the engine's live inset: during any keyboard
+transition a display link reads physicalViewInsetBottom and lays the bar out from it (bottom = inset,
+padding = max(0, restingPadding - inset)). The plugin only produces the inset where the engine cannot
+- the interactive drag and the duration-0 instant hide - and in both cases the bar and the inset come
+from the same values. The app keeps resizeToAvoidBottomInset: true, so the end of the list stays visible.

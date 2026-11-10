@@ -49,6 +49,11 @@ extension FlutterViewController {
   ) {
     let wasTracking = KeyboardManager.shared.isTrackingKeyboard
     KeyboardManager.shared.willProcessKeyboardNotification(notification)
+    if let notification, KeyboardManager.shared.ownsInstantCollapse(notification) {
+      // The engine would write the end inset in one frame; the plugin animates it down instead.
+      KeyboardManager.shared.ownedCollapseTransition(notification)
+      return
+    }
     engine()
     guard let notification else { return }
     KeyboardManager.shared.keyboardNotificationHandled(notification, wasTracking: wasTracking)

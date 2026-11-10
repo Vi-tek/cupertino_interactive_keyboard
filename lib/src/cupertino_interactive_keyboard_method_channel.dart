@@ -23,6 +23,12 @@ class MethodChannelCupertinoInteractiveKeyboard
       _hostedAccessoryEvents.stream;
 
   @override
+  Future<void> setTraceEnabled(bool enabled) {
+    return methodChannel.invokeMethod('setTraceEnabled', {'enabled': enabled});
+  }
+
+
+  @override
   Future<bool?> initialize({required bool firstTime}) async {
     return methodChannel.invokeMethod<bool>('initialize', {
       'firstTime': firstTime,
@@ -113,6 +119,9 @@ class MethodChannelCupertinoInteractiveKeyboard
   Future<Object?> _handleMethodCall(MethodCall call) {
     final arguments = (call.arguments as Map?) ?? const {};
     switch (call.method) {
+      case 'trace':
+        debugPrint(arguments['line'] as String? ?? '');
+        return Future.value();
       case 'hostedAccessoryHeight':
         _hostedAccessoryEvents.add({
           'type': 'height',

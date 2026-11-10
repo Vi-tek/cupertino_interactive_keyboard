@@ -13,6 +13,9 @@ class KeyboardAccessory extends StatefulWidget {
 
 class _KeyboardAccessoryState extends State<KeyboardAccessory> {
   final _controller = CupertinoHostedInputAccessoryController();
+
+  /// Whether the plugin's native trace is on (debug builds only).
+  bool _traceEnabled = false;
   final _messages = <_ChatMessage>[
     const _ChatMessage(
       'Type a message below and tap send. The bar is a second Flutter engine '
@@ -121,6 +124,19 @@ class _KeyboardAccessoryState extends State<KeyboardAccessory> {
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: 68,
+        actions: [
+          IconButton(
+            tooltip: 'Native keyboard trace',
+            icon: Icon(
+              _traceEnabled ? Icons.bug_report : Icons.bug_report_outlined,
+            ),
+            onPressed: () {
+              setState(() => _traceEnabled = !_traceEnabled);
+              debugPrint('[cik] trace ${_traceEnabled ? 'ON' : 'OFF'}');
+              setKeyboardTraceEnabled(_traceEnabled);
+            },
+          ),
+        ],
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
