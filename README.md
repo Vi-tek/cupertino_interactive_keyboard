@@ -277,6 +277,11 @@ Column(
 - `hidden` is the cheap visibility switch: the engine and its widget state stay alive, only
   drawing and hit-testing are skipped. Use it for a bar that appears with a panel or a screen;
   unmount the widget only when the bar is really done.
+- The cleanest junction between the list and the bar: keep `resizeToAvoidBottomInset: false` and put
+  `MediaQuery.viewInsets.bottom` into the list's bottom padding instead of resizing the body. The
+  list's viewport then never changes size during a drag, so there is no moving clip edge and no
+  scroll-offset correction; `CupertinoKeyboardAccessory` still reserves the composer's height in the
+  layout.
 
 ## Example app
 

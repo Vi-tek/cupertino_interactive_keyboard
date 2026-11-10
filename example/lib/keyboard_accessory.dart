@@ -121,7 +121,13 @@ class _KeyboardAccessoryState extends State<KeyboardAccessory> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // The list's viewport stays the size it was: the keyboard inset is applied as bottom padding
+    // instead of resizing the body. A viewport that never changes size has no moving clip edge and
+    // triggers no scroll-offset correction during the drag, so the list cannot be cut at a stale
+    // edge; the content is only pushed by the padding value.
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         toolbarHeight: 68,
         actions: [
@@ -158,7 +164,9 @@ class _KeyboardAccessoryState extends State<KeyboardAccessory> {
             child: CupertinoInteractiveKeyboard(
               child: ListView.builder(
                 reverse: true,
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                // The reservation above is the composer's height at rest; the inset is what the
+                // keyboard covers, so their sum puts the newest message just above the composer.
+                padding: EdgeInsets.fromLTRB(16, 16, 16, 8 + keyboardInset),
                 itemCount: _messages.length,
                 itemBuilder: (context, index) =>
                     _MessageBubble(message: _messages[index]),
