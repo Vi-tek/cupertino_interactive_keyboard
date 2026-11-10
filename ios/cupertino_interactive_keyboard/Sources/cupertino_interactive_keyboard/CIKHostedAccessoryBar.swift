@@ -41,6 +41,14 @@ class CIKHostedAccessoryBar: UIView {
   /// Called with the bar's total height whenever it changes, safe area included.
   var onHeightChange: ((CGFloat) -> Void)?
 
+  /// The bar's bottom edge in its superview's coordinates, ignoring the release correction.
+  ///
+  /// `center` and `bounds` are not affected by `transform`, so this is the position Auto Layout
+  /// gives the bar; the release correction offsets it visually.
+  var bottomBeforeTransform: CGFloat {
+    center.y + bounds.height / 2
+  }
+
   /// The current height of the bar, safe area included.
   var barHeight: CGFloat {
     KeyboardGeometry.hostedAccessoryHeight(
@@ -92,6 +100,7 @@ class CIKHostedAccessoryBar: UIView {
   override func layoutSubviews() {
     super.layoutSubviews()
     updateHeightIfNeeded()
+    traceLayoutIfChanged()
   }
 
   private func updateHeightIfNeeded() {
@@ -101,4 +110,28 @@ class CIKHostedAccessoryBar: UIView {
     heightConstraint.constant = height
     onHeightChange?(height)
   }
+
+  /// Logs the bar's position against the guide it is pinned to, change-only.
+  private func traceLayoutIfChanged() {
+    guard CIKTrace.isEnabled else { return }
+    var guideTop: CGFloat?
+    if #available(iOS 15.0, *) {
+      guideTop = superview?.keyboardLayoutGuide.layoutFrame.minY
+    }
+    let bottom = frame.maxY
+    if let lastBottom = tracedBottom, let lastGuide = tracedGuideTop,
+      abs(lastBottom - bottom) < 0.5, abs(lastGuide - (guideTop ?? 0)) < 0.5
+    {
+      return
+    }
+    tracedBottom = bottom
+    tracedGuideTop = guideTop
+    CIKTrace.log(
+      "bar",
+      "bottom=\(CIKTrace.points(bottom)) auto=\(CIKTrace.points(bottomBeforeTransform)) guideTop=\(CIKTrace.points(guideTop)) correction=\(CIKTrace.points(transform.ty)) height=\(CIKTrace.points(bounds.height))"
+    )
+  }
+
+  private var tracedBottom: CGFloat?
+  private var tracedGuideTop: CGFloat?
 }

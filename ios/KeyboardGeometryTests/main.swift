@@ -60,6 +60,31 @@ expect(
   "the inset never becomes negative"
 )
 
+// The release target: the keyboard's top edge becomes the band's bottom edge.
+expect(
+  KeyboardGeometry.releaseBandBottom(keyboardTop: 844 - 336, viewBottom: 844),
+  844 - 336,
+  "the band ends on the keyboard's top edge"
+)
+
+expect(
+  KeyboardGeometry.releaseBandBottom(keyboardTop: nil, viewBottom: 844),
+  844,
+  "a hidden or floating keyboard puts the band at the view bottom"
+)
+
+expect(
+  KeyboardGeometry.releaseBandBottom(keyboardTop: -40, viewBottom: 844),
+  0,
+  "a keyboard above the view cannot put the band above it"
+)
+
+expect(
+  KeyboardGeometry.releaseBandBottom(keyboardTop: 900, viewBottom: 844),
+  844,
+  "a keyboard below the view leaves the band at the view bottom"
+)
+
 // A docked keyboard's band spans at least the width of the Flutter view.
 expect(
   KeyboardGeometry.isDockedBand(bandWidth: 402, viewWidth: 402),

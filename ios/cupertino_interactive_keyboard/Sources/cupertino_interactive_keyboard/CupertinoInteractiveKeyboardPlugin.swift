@@ -270,11 +270,19 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     self.accessoryViewController = accessoryViewController
     self.accessoryChannel = accessoryChannel
     self.hostedAccessoryBar = bar
-    // A hidden bar is not the live keyboard band, so the inset driver must not follow it.
-    KeyboardManager.shared.hostedAccessoryBar = config.hidden ? nil : bar
+    // The bar is the inset driver's live band even while hidden: it is still pinned to the keyboard
+    // guide and still lays out, and an app whose bar is hidden has to position its own composer with
+    // the inset alone.
+    KeyboardManager.shared.hostedAccessoryBar = bar
     
     // Lay the bar out once so the height handed back already reflects its real safe area.
     flutterView.layoutIfNeeded()
+    CIKTrace.log(
+      "hosted",
+      "create height=" + CIKTrace.points(config.height)
+        + " hidden=" + String(config.hidden)
+        + " barHeight=" + CIKTrace.points(bar.barHeight)
+    )
     result(["height": Double(bar.barHeight)])
   }
   
@@ -316,11 +324,14 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
   /// Shows or hides the bar without tearing its engine down.
   ///
   /// Hiding only skips drawing and hit-testing, so the accessory app keeps its state and showing
-  /// it again costs a frame. A hidden bar also stops being the keyboard band the inset driver
-  /// follows: it is not on screen, so its frame says nothing about the keyboard.
+  /// it again costs a frame. The bar keeps being the keyboard band the inset driver follows: a
+  /// hidden view still lays out on the keyboard guide, so its frame still tracks the keyboard.
   private func updateHostedAccessoryHidden(_ hidden: Bool) {
     hostedAccessoryBar?.isHidden = hidden
-    KeyboardManager.shared.hostedAccessoryBar = hidden ? nil : hostedAccessoryBar
+    // A hidden bar keeps being the live band: it still lays out on the keyboard guide, and while the
+    // bar is hidden the app positions its own composer with the inset alone.
+    KeyboardManager.shared.hostedAccessoryBar = hostedAccessoryBar
+    CIKTrace.log("hosted", "hidden=" + String(hidden))
   }
 
   /// Sends a message to the accessory app, queueing it until the app reported `ready`.
@@ -348,6 +359,7 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     accessoryReady = false
     pendingAccessoryInvocations = []
     KeyboardManager.shared.hostedAccessoryBar = nil
+    CIKTrace.log("hosted", "tear down")
   }
   
   public func detachFromEngine(for registrar: FlutterPluginRegistrar) {

@@ -19,6 +19,16 @@ enum KeyboardGeometry {
     max(0, viewBottom - bandBottom) * scale
   }
 
+  /// The bottom edge of the keyboard band in screen points for a release notification.
+  ///
+  /// A release notification carries the keyboard's end frame: its top edge is the band's bottom. A
+  /// hidden, floating or empty keyboard leaves no band, so `nil` puts the band at the view's
+  /// bottom. The result is clamped, so a keyboard above the view cannot put the band outside it.
+  static func releaseBandBottom(keyboardTop: CGFloat?, viewBottom: CGFloat) -> CGFloat {
+    guard let keyboardTop else { return viewBottom }
+    return max(0, min(viewBottom, keyboardTop))
+  }
+
   /// The total height of the hosted accessory bar.
   ///
   /// The bar is a fixed-height container: the second Flutter engine renders the composer inside it

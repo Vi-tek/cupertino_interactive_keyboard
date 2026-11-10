@@ -1,4 +1,5 @@
 import Flutter
+import QuartzCore
 import UIKit
 
 class KeyboardManager {
@@ -60,6 +61,9 @@ class KeyboardManager {
     return Notification(name: notification.name, object: notification.object, userInfo: userInfo)
   }
 
+  /// Whether the interactive drag is currently driving the inset.
+  var isTrackingKeyboard: Bool { interactiveTrackingDisplayLink != nil }
+
   // MARK: - Interactive dismissal
 
   /// Whether the user is currently dragging the keyboard away.
@@ -84,8 +88,30 @@ class KeyboardManager {
   /// The notifications the engine ignores are ignored here too, so a zero-frame change posted
   /// while the keyboard is dragged cannot stop the tracking and freeze the inset.
   func willProcessKeyboardNotification(_ notification: Notification?) {
-    guard let notification, !isIgnoredByEngine(notification) else { return }
+    guard let notification else { return }
+    // Every notification is traced, including the ones the engine ignores: the empty release frames
+    // posted while the keyboard is dragged are what the trace has to rule out.
+    traceNotificationIfNeeded(notification)
+    guard !isIgnoredByEngine(notification) else { return }
     stopInteractiveTracking()
+  }
+
+  /// Logs the notification the engine is about to handle.
+  ///
+  /// Every release notification is traced, not only the changing ones: the duration and the end
+  /// frame are what decide whether the engine animates the inset or snaps it.
+  private func traceNotificationIfNeeded(_ notification: Notification) {
+    guard CIKTrace.isEnabled else { return }
+    let info = notification.userInfo
+    let begin = (info?[UIResponder.keyboardFrameBeginUserInfoKey] as? NSValue)?.cgRectValue
+    let end = (info?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+    let duration = (info?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue
+    let curve = (info?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue
+    let isLocal = (info?[UIResponder.keyboardIsLocalUserInfoKey] as? NSNumber)?.boolValue
+    CIKTrace.log(
+      "keyboard",
+      "name=\(notification.name.rawValue) begin=\(CIKTrace.rect(begin)) end=\(CIKTrace.rect(end)) duration=\(duration.map(CIKTrace.seconds) ?? "nil") curve=\(curve.map(String.init(describing:)) ?? "nil") isLocal=\(isLocal.map(String.init(describing:)) ?? "nil") tracking=\(isTrackingKeyboard) dragging=\(isDraggingKeyboard)"
+    )
   }
 
   /// Whether the engine would ignore this notification.
@@ -168,18 +194,184 @@ class KeyboardManager {
     let displayLink = CADisplayLink(target: self, selector: #selector(trackInteractiveKeyboard))
     displayLink.add(to: .main, forMode: .common)
     interactiveTrackingDisplayLink = displayLink
+    CIKTrace.log("tracking", "start")
   }
 
   func stopInteractiveTracking() {
+    if isTrackingKeyboard {
+      CIKTrace.log("tracking", "stop band=\(CIKTrace.points(lastBandBottom))")
+    }
     interactiveTrackingDisplayLink?.invalidate()
     interactiveTrackingDisplayLink = nil
     lastReportedInset = nil
-    lastBandBottom = nil
+    // `lastBandBottom` is deliberately kept: the release hand-off starts its correction from the
+    // band's last live position, which is only known while the session is running.
     staticTicks = 0
     trackingTicks = 0
     missingBandTicks = 0
     isInsetSyncScheduled = false
     invalidatedEngineAnimation = false
+  }
+
+  /// The animation key of the bar's release correction, so it can be told apart from UIKit's own.
+  private static let releaseCorrectionKey = "cikReleaseCorrection"
+
+  /// Records the band's position when the drag ends.
+  ///
+  /// The last display-link tick can be a frame old, and a release that ends the session before the
+  /// next tick would start the correction from the wrong position.
+  func keyboardDragDidEnd() {
+    guard interactiveTrackingDisplayLink != nil else { return }
+    lastBandBottom = syncInset() ?? lastBandBottom
+  }
+
+  /// Reconciles the bar with the keyboard after a notification.
+  ///
+  /// The keyboard layout guide follows the drag, but its only documented contract is a docked
+  /// keyboard's show/hide animation: on release the guide is moved to the end position in one step,
+  /// so a bar pinned to it snaps while the keyboard keeps animating. This animates the difference
+  /// between where the bar has to be and where Auto Layout put it, with the keyboard notification's
+  /// own duration and curve.
+  ///
+  /// The correction is also reconciled on every later notification while it is non-zero: when the
+  /// guide catches up it animates back to zero, and when it moves somewhere else the offset is
+  /// re-targeted instead of being added on top of the guide's position. A correction that stays
+  /// non-zero after both is logged - that is the case the plugin-owned geometry has to take over.
+  func keyboardNotificationHandled(_ notification: Notification, wasTracking: Bool) {
+    guard !isIgnoredByEngine(notification) else { return }
+    // A normal (non-interactive) transition only needs the bar when a correction is still applied.
+    guard wasTracking || abs(hostedAccessoryBar?.transform.ty ?? 0) > 0.5 else { return }
+    // UIKit can post the release notification while the dismissal recognizer is still in its
+    // begin/changed phase. One runloop turn later the gesture is over and the correction is not
+    // lost; if it is not over, the drag is still in charge.
+    if wasTracking, isDraggingKeyboard {
+      CIKTrace.log(
+        "release",
+        "deferred: still dragging notification=" + notification.name.rawValue
+      )
+      DispatchQueue.main.async { [weak self] in
+        self?.applyBarCorrection(notification, wasTracking: true)
+      }
+      return
+    }
+    applyBarCorrection(notification, wasTracking: wasTracking)
+  }
+
+  private func applyBarCorrection(_ notification: Notification, wasTracking: Bool) {
+    guard
+      let bar = hostedAccessoryBar,
+      bar.window != nil,
+      let flutterViewController,
+      let flutterView = flutterViewController.view,
+      let window = flutterView.window
+    else {
+      return
+    }
+    if wasTracking, isDraggingKeyboard {
+      CIKTrace.log("release", "skip: still dragging after the deferral")
+      return
+    }
+    let info = notification.userInfo
+    guard let endFrame = (info?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+    else {
+      return
+    }
+    let duration =
+      (info?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
+    let curve = (info?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 7
+    let screen = window.screen
+
+    // The visual position has to be read before Auto Layout is forced to the release's end position.
+    let visualBottomBeforeLayout = bar.frame.maxY
+    let heldCorrection = bar.transform.ty
+    flutterView.layoutIfNeeded()
+
+    // UIKit already animating the bar means this transition went through the guide; leave it alone.
+    let otherAnimations = (bar.layer.animationKeys() ?? []).filter {
+      $0 != Self.releaseCorrectionKey
+    }
+    if !otherAnimations.isEmpty {
+      CIKTrace.log(
+        "release",
+        "skip: bar layer animating keys=" + otherAnimations.joined(separator: ",")
+          + " notification=" + notification.name.rawValue
+      )
+      return
+    }
+
+    let viewRect = liveScreenRect(of: flutterView, in: screen)
+    // A hidden, empty or floating keyboard leaves no band, so the bar belongs at the view's bottom.
+    let hidden =
+      notification.name == UIResponder.keyboardWillHideNotification
+      || endFrame.isEmpty
+      || !KeyboardGeometry.isDockedBand(bandWidth: endFrame.width, viewWidth: viewRect.width)
+    let targetBottom = max(
+      0,
+      KeyboardGeometry.releaseBandBottom(
+        keyboardTop: hidden ? nil : endFrame.minY,
+        viewBottom: viewRect.maxY
+      ) - viewRect.minY
+    )
+    let autoBottom = bar.bottomBeforeTransform
+    let wanted = targetBottom - autoBottom
+    // A release starts where the bar was last drawn; a reconciliation starts from the held offset.
+    let start: CGFloat
+    if wasTracking {
+      start = (lastBandBottom.map { $0 - viewRect.minY } ?? visualBottomBeforeLayout) - autoBottom
+    } else {
+      start = heldCorrection
+    }
+    CIKTrace.log(
+      "release",
+      "notification=" + notification.name.rawValue
+        + " duration=" + CIKTrace.seconds(duration)
+        + " curve=" + String(curve)
+        + " target=" + CIKTrace.points(targetBottom)
+        + " auto=" + CIKTrace.points(autoBottom)
+        + " start=" + CIKTrace.points(start)
+        + " wanted=" + CIKTrace.points(wanted)
+        + " held=" + CIKTrace.points(heldCorrection)
+    )
+
+    if abs(wanted - start) <= 0.5 {
+      // Nothing to travel; drop a stale offset if the guide caught up.
+      if abs(heldCorrection - wanted) > 0.5 {
+        setBarCorrection(bar, wanted)
+      }
+      return
+    }
+
+    // An explicit `fromValue` is used instead of `UIView.animate`: the bar's layout already jumped
+    // to the end position, so an implicit animation would start from the wrong value.
+    let animation = CABasicAnimation(keyPath: "transform.translation.y")
+    animation.fromValue = start
+    animation.toValue = wanted
+    animation.duration = duration
+    animation.timingFunction = timingFunction(forCurve: curve)
+    bar.layer.add(animation, forKey: Self.releaseCorrectionKey)
+    setBarCorrection(bar, wanted)
+  }
+
+  /// Sets the bar's correction without a competing implicit animation.
+  private func setBarCorrection(_ bar: CIKHostedAccessoryBar, _ correction: CGFloat) {
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    bar.transform = CGAffineTransform(translationX: 0, y: correction)
+    CATransaction.commit()
+  }
+
+  /// The keyboard notification's curve, as a timing function the correction can follow.
+  ///
+  /// Curve 7 is UIKit's private keyboard curve; its spring is not exposed, so the classic keyboard
+  /// control points are used.
+  private func timingFunction(forCurve curve: UInt) -> CAMediaTimingFunction {
+    switch curve {
+    case 0: return CAMediaTimingFunction(name: .easeInEaseOut)
+    case 1: return CAMediaTimingFunction(name: .easeIn)
+    case 2: return CAMediaTimingFunction(name: .easeOut)
+    case 3: return CAMediaTimingFunction(name: .linear)
+    default: return CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1)
+    }
   }
 
   @objc
@@ -272,6 +464,10 @@ class KeyboardManager {
     invalidateEngineAnimationIfNeeded()
     updateViewportMetrics(inset)
     syncEngineTargetInset(inset)
+    CIKTrace.log(
+      "inset",
+      "band=\(CIKTrace.points(bandBottom)) inset=\(CIKTrace.points(inset)) engine=\(CIKTrace.points(readPhysicalViewInsetBottom()))"
+    )
     return bandBottom
   }
 
@@ -296,6 +492,26 @@ class KeyboardManager {
       to: UpdateViewportMetricsFunction.self
     )
     updateViewportMetrics(flutterViewController, selector, inset)
+  }
+
+  /// Reads the inset the engine currently has, for the DEBUG trace only.
+  ///
+  /// The engine declares this on its keyboard inset manager delegate rather than in a public
+  /// header, so it is called through the runtime like the setter.
+  private func readPhysicalViewInsetBottom() -> CGFloat? {
+    let selector = NSSelectorFromString("physicalViewInsetBottom")
+    guard
+      let flutterViewController,
+      let method = class_getInstanceMethod(FlutterViewController.self, selector)
+    else {
+      return nil
+    }
+    typealias PhysicalViewInsetBottomFunction = @convention(c) (AnyObject, Selector) -> CGFloat
+    let read = unsafeBitCast(
+      method_getImplementation(method),
+      to: PhysicalViewInsetBottomFunction.self
+    )
+    return read(flutterViewController, selector)
   }
 
   /// Keeps the target inset of the engine on the value the plugin just wrote.
