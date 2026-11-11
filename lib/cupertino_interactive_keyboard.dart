@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 
 export 'cupertino_accessory.dart';
 export 'src/cupertino_hosted_input_accessory.dart';
+export 'src/cupertino_hosted_keyboard_surface.dart';
 export 'src/cupertino_input_accessory.dart';
 export 'src/cupertino_interactive_keyboard.dart';
 

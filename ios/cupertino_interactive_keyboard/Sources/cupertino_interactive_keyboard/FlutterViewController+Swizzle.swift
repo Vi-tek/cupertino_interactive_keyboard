@@ -47,6 +47,12 @@ extension FlutterViewController {
     _ notification: Notification?,
     engine: () -> Void
   ) {
+    // The hosted surface engine keeps a fixed layout and is moved by a transform: it must never
+    // see a keyboard inset, or the hosted content would re-lay out on every keyboard frame. The
+    // main engine's controller drives the surface position instead.
+    if KeyboardManager.shared.isHostedSurface(self) {
+      return
+    }
     let wasTracking = KeyboardManager.shared.isTrackingKeyboard
     KeyboardManager.shared.willProcessKeyboardNotification(notification)
     if let notification, KeyboardManager.shared.ownsInstantCollapse(notification) {

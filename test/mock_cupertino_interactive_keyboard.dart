@@ -20,8 +20,18 @@ class MockCupertinoInteractiveKeyboard
   /// Calls passed to [invokeHostedAccessory], in call order.
   final hostedAccessoryInvokes = <Map<String, Object?>>[];
 
+  /// Rects passed to [updateHostedAccessoryRect], in call order.
+  final hostedAccessoryRectUpdates = <Rect>[];
+
   /// Number of [removeHostedAccessory] calls.
   int removeHostedAccessoryCalls = 0;
+
+  /// The ids passed to [removeHostedAccessory], in call order (null when none was given).
+  final removeHostedAccessoryIds = <int?>[];
+
+  /// When set, [createHostedAccessory] returns this future instead of resolving immediately; lets
+  /// a test unmount a widget while its engine is starting.
+  Future<double?>? createHostedAccessoryFuture;
 
   /// The total height returned by [createHostedAccessory]; null keeps the
   /// widget on its placeholder height until a height event arrives.
@@ -45,19 +55,29 @@ class MockCupertinoInteractiveKeyboard
     required String libraryURI,
     required double height,
     bool hidden = false,
+    Rect? rect,
+    int? id,
   }) {
     hostedAccessoryCreateCalls.add({
       'entrypoint': entrypoint,
       'libraryURI': libraryURI,
       'height': height,
       'hidden': hidden,
+      if (rect != null) 'rect': rect,
+      if (id != null) 'id': id,
     });
-    return Future.value(createResultHeight);
+    return createHostedAccessoryFuture ?? Future.value(createResultHeight);
   }
 
   @override
   Future<void> updateHostedAccessoryHidden(bool hidden) {
     hostedAccessoryHiddenCalls.add(hidden);
+    return Future.value();
+  }
+
+  @override
+  Future<void> updateHostedAccessoryRect(Rect rect) {
+    hostedAccessoryRectUpdates.add(rect);
     return Future.value();
   }
 
@@ -74,8 +94,9 @@ class MockCupertinoInteractiveKeyboard
   }
 
   @override
-  Future<void> removeHostedAccessory() {
-    removeHostedAccessoryCalls++;
+  Future<void> removeHostedAccessory({int? id}) {
+    removeHostedAccessoryCalls += 1;
+    removeHostedAccessoryIds.add(id);
     return Future.value();
   }
 

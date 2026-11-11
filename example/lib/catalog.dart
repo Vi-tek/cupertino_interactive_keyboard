@@ -20,6 +20,11 @@ class Catalog extends StatelessWidget {
           ),
           const Divider(height: 1),
           ListTile(
+            title: const Text("Hosted Keyboard Surface"),
+            onTap: () => Navigator.pushNamed(context, "/hosted_surface"),
+          ),
+          const Divider(height: 1),
+          ListTile(
             title: const Text("Nested Navigation"),
             onTap: () => Navigator.pushNamed(context, "/nested_navigation"),
           ),

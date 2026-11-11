@@ -78,6 +78,58 @@ enum KeyboardGeometry {
     bandWidth >= viewWidth - 1
   }
 
+
+  /// The vertical translation of a hosted keyboard surface for the live keyboard inset.
+  ///
+  /// A surface keeps a fixed frame and is moved by a transform, so it never resizes while the
+  /// keyboard moves: the pixels are cached and Core Animation moves them on the keyboard's own
+  /// clock. The surface rests with its bottom edge one safe-area inset above the Flutter view's
+  /// bottom (the home indicator strip), so the first `restingPadding` points of keyboard travel do
+  /// not move it, and a keyboard that has not moved the surface at all leaves it untranslated.
+  ///
+  /// - Parameters:
+  ///   - inset: The distance from the Flutter view's bottom to the keyboard's top, in points.
+  ///   - restingPadding: The bottom safe area inset of the surface, in points.
+  /// - Returns: The translation in points, zero or negative (upwards).
+  static func surfaceTranslation(inset: CGFloat, restingPadding: CGFloat) -> CGFloat {
+    -max(0, inset - restingPadding)
+  }
+
+  /// The height of a hosted surface's engine view.
+  ///
+  /// The engine view stops one safe-area inset above the Flutter view's bottom, so the home
+  /// indicator strip is painted by the app behind it and the engine view never touches the home
+  /// indicator (its safe area is therefore constant while the surface moves).
+  ///
+  /// - Parameters:
+  ///   - rectHeight: The height of the surface rectangle, in points.
+  ///   - safeAreaBottom: The bottom safe area inset of the surface, in points.
+  /// - Returns: The engine view height in points, never negative.
+  static func surfaceContentHeight(
+    rectHeight: CGFloat,
+    safeAreaBottom: CGFloat
+  ) -> CGFloat {
+    max(0, rectHeight - safeAreaBottom)
+  }
+
+  /// The keyboard inset a hosted surface's translation was computed from.
+  ///
+  /// A surface is untranslated for every keyboard inset up to its resting safe-area inset, so this
+  /// value saturates at [restingPadding] near the bottom and is only meaningful while the surface
+  /// is off its resting position. The manager only uses it to seed a drag, which cannot start
+  /// there (the keyboard is visible only once its inset is larger than the resting one).
+  ///
+  /// - Parameters:
+  ///   - translation: The surface's presented vertical translation, in points.
+  ///   - restingPadding: The bottom safe area inset of the surface, in points.
+  /// - Returns: The keyboard inset the translation corresponds to, in points.
+  static func surfaceKeyboardInset(
+    translation: CGFloat,
+    restingPadding: CGFloat
+  ) -> CGFloat {
+    restingPadding - translation
+  }
+
   /// Whether the interactive tracking can be stopped.
   ///
   /// The tracking has to survive the release of the gesture, because the keyboard animates back

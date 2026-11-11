@@ -1,5 +1,14 @@
 ## Unreleased
 
+* Hosted keyboard surface: `CupertinoHostedKeyboardSurface` (main isolate) and
+  `runCupertinoKeyboardSurface` (surface isolate) host the whole content area above the keyboard -
+  the scrolling list and its composer - in the second engine, inside a native container that tracks
+  the keyboard. The hosted engine keeps a fixed layout and is moved by a transform, so the content
+  moves with the keyboard frame for frame; the list cannot lag the composer. The plugin gains
+  `updateHostedAccessoryRect`, a `hostedAccessoryReleased` event with host ids (one hosted thing per
+  app; the displaced widget is told), `backend-driven` `hidden`/`keyboardDragging` messages to the
+  hosted isolate, and `CupertinoAccessoryController.onKeyboardDragging`.
+* The example gains `/hosted_surface`, a frame-locked chat screen using the surface.
 * `isKeyboardDragging`: a package-level `ValueListenable<bool>` that turns true while the interactive
   dismissal gesture drags the keyboard and false the moment the finger is released, before the
   keyboard animates back or away.

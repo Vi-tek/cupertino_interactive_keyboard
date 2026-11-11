@@ -11,14 +11,32 @@ class KeyboardManager {
 
   weak var flutterViewController: FlutterViewController?
 
-  /// The hosted accessory bar, when the Dart side uses one. The plugin positions it itself: its
-  /// bottom edge is the keyboard's top edge while the keyboard is on screen and the view's bottom
-  /// edge once it is gone, so the same inset formula keeps the content glued to it either way.
-  weak var hostedAccessoryBar: CIKHostedAccessoryBar?
+  /// The hosted band the plugin positions: the composer bar or the content surface. Both are
+  /// moved by this manager, so the same inset formula keeps the content glued to the keyboard.
+  weak var hostedBand: CIKHostedBand?
 
-  /// The bar's bottom edge in points above the Flutter view's bottom, as last set by a keyboard
-  /// notification. Read when a bar is created while the keyboard is already open.
+  /// The view controller of the hosted surface engine, when one is hosted.
+  ///
+  /// Its keyboard notifications are swallowed: the surface is moved by a transform, so the engine's
+  /// own inset must stay 0 or the hosted content would re-lay out on every keyboard frame.
+  weak var hostedSurfaceViewController: FlutterViewController?
+
+  /// Whether the plugin writes its drag inset into the main engine's viewport metrics.
+  ///
+  /// A hosted surface moves itself natively; the main engine is inset-immune while one is hosted,
+  /// so the write is off and the engine's own animation is left alone.
+  var publishesInsetToEngine = true
+
+  /// Called when interactive tracking stops (used to apply a rectangle that changed mid-drag).
+  var onTrackingStopped: (() -> Void)?
+
+  /// The band's bottom edge in points above the Flutter view's bottom, as last set by a keyboard
+  /// notification. Read when a band is created while the keyboard is already open.
   var currentBarInset: CGFloat { barInset }
+
+  func isHostedSurface(_ viewController: FlutterViewController) -> Bool {
+    hostedSurfaceViewController === viewController
+  }
 
   private(set) var barInset: CGFloat = 0
   private var barInsetAtDragStart: CGFloat = 0
@@ -179,14 +197,24 @@ class KeyboardManager {
       return
     }
 
+    guard let band = hostedBand, band.view.window != nil,
+      let flutterView = flutterViewController?.view, flutterView.window != nil
+    else {
+      return
+    }
+
+    // A surface rests with its engine view one safe area inset above the view's bottom and its
+    // container's bottom is the view's bottom, so the bar's "off the bottom" test cannot tell
+    // whether the keyboard is up. The last notification inset can.
+    if band is CIKHostedSurface {
+      guard barInset > 0.5 else { return }
+      startInteractiveTracking()
+      return
+    }
+
     // The hosted bar is on screen whenever the plugin is used, so it only marks a visible keyboard
     // once its bottom edge has left the Flutter view's bottom edge.
-    guard
-      let hostedAccessoryBar,
-      hostedAccessoryBar.window != nil,
-      let flutterView = flutterViewController?.view,
-      flutterView.window != nil,
-      flutterView.bounds.maxY - hostedAccessoryBar.convert(hostedAccessoryBar.bounds, to: flutterView).maxY > 1
+    guard flutterView.bounds.maxY - (band.presentedBottom(in: flutterView) ?? flutterView.bounds.maxY) > 1
     else {
       return
     }
@@ -231,31 +259,15 @@ class KeyboardManager {
     barInset = inset
   }
 
-  /// Stops a running keyboard animation on the bar and pins it where it is currently drawn.
-  ///
-  /// A drag can begin while the keyboard is still animating. Taking over from the animation's end
-  /// target would snap the Flutter content to the end of that animation while the bar is still
-  /// travelling.
-  private func freezeBarAtVisiblePosition() {
-    guard let bar = hostedAccessoryBar, let superview = bar.superview else { return }
-    let frame = bar.layer.presentation()?.frame ?? bar.layer.frame
-    let visibleInset = max(0, superview.bounds.maxY - frame.maxY)
-    bar.layer.removeAllAnimations()
-    bar.setBottomInset(visibleInset)
-    if visibleInset > 0.5 {
-      bar.contentPadding = 0
-    }
-    UIView.performWithoutAnimation {
-      superview.layoutIfNeeded()
-    }
-    barInset = visibleInset
-  }
-
   private func startInteractiveTracking() {
     guard interactiveTrackingDisplayLink == nil else { return }
     ownedHideLink?.invalidate()
     ownedHideLink = nil
-    freezeBarAtVisiblePosition()
+    // A drag can begin while the keyboard is still animating: take over from the band's presented
+    // position, not from the animation's end target.
+    if let frozen = hostedBand?.freezeAtVisiblePosition() {
+      barInset = frozen
+    }
     barInsetAtDragStart = barInset
     guideTopAtDragStart = guideTopInView()
     lastReportedInset = nil
@@ -287,9 +299,10 @@ class KeyboardManager {
     isInsetSyncScheduled = false
     invalidatedEngineAnimation = false
     reportKeyboardDragging(false)
+    onTrackingStopped?()
   }
 
-  /// Moves the bar onto the keyboard's end position for a keyboard notification.
+  /// Moves the band onto the keyboard's end position for a keyboard notification.
   ///
   /// The bar is not constrained to the keyboard layout guide: the guide follows the drag but snaps to
   /// its end position on release, so the plugin moves the bar itself, with the notification's own
@@ -358,28 +371,17 @@ class KeyboardManager {
         + " includesSafeArea=" + String(includesSafeArea)
     )
 
-    guard let bar = hostedAccessoryBar, bar.window != nil else { return }
-    // The bottom moves with the notification's own animation; the padding is part of the same
-    // motion so the composer lands above the home indicator instead of being pushed up later.
-    let targetPadding = includesSafeArea ? bar.restingPadding : 0
-    if abs(bar.contentPadding - targetPadding) > 0.05 {
-      bar.heightAnimation = (max(duration, 0.2), curve)
-    }
-    let animations = {
-      bar.setBottomInset(targetInset)
-      bar.contentPadding = targetPadding
-      bar.superview?.layoutIfNeeded()
-    }
-    if duration > 0 {
-      UIView.animate(
-        withDuration: duration,
-        delay: 0,
-        options: UIView.AnimationOptions(rawValue: curve << 16),
-        animations: animations
-      )
-    } else {
-      UIView.performWithoutAnimation(animations)
-    }
+    guard let band = hostedBand, band.view.window != nil else { return }
+    // The band moves with the notification's own animation; its padding is part of the same
+    // motion so the content lands above the home indicator instead of being pushed up later.
+    let targetPadding = includesSafeArea ? band.restingPadding : 0
+    band.apply(
+      inset: targetInset,
+      padding: targetPadding,
+      animated: duration > 0,
+      duration: duration,
+      curve: curve
+    )
   }
 
   // MARK: - Instant hides
@@ -398,16 +400,26 @@ class KeyboardManager {
   /// change). While the keyboard still animates away that snaps the whole app content by the
   /// keyboard height, so the plugin animates the inset down itself for any instant collapse.
   func ownsInstantCollapse(_ notification: Notification) -> Bool {
-    guard hostedAccessoryBar != nil, !isIgnoredByEngine(notification) else { return false }
+    guard let band = hostedBand, let window = band.view.window,
+      !isIgnoredByEngine(notification)
+    else {
+      return false
+    }
     let duration =
       (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?
       .doubleValue ?? 0
     guard duration <= 0 else { return false }
-    guard let target = hostedTargetInset(notification), let window = hostedAccessoryBar?.window
-    else {
+    guard let target = hostedTargetInset(notification) else {
       return false
     }
-    let current = (readPhysicalViewInsetBottom() ?? 0) / window.screen.scale
+    let current: CGFloat
+    if band is CIKHostedSurface {
+      // The main engine's inset is not written in surface mode; the manager's own inset is the
+      // live position of the surface.
+      current = barInset
+    } else {
+      current = (readPhysicalViewInsetBottom() ?? 0) / window.screen.scale
+    }
     return target.points < current - 1
   }
 
@@ -417,19 +429,27 @@ class KeyboardManager {
   /// Both Flutter view controllers see the notification; only the first one runs the transition.
   func ownedCollapseTransition(_ notification: Notification) {
     guard ownedHideLink == nil else { return }
-    guard let target = hostedTargetInset(notification), let bar = hostedAccessoryBar,
-      let window = bar.window
+    guard let target = hostedTargetInset(notification), let band = hostedBand,
+      let window = band.view.window
     else {
       return
     }
-    let current = (readPhysicalViewInsetBottom() ?? 0) / window.screen.scale
+    let current: CGFloat
+    if band is CIKHostedSurface {
+      current = barInset
+    } else {
+      current = (readPhysicalViewInsetBottom() ?? 0) / window.screen.scale
+    }
     guard current > target.points + 1 else { return }
-    invalidateEngineAnimation()
+    if !(band is CIKHostedSurface) {
+      // The surface engine's inset is never written, so there is no engine animation to stop.
+      invalidateEngineAnimation()
+    }
     ownedHideLink?.invalidate()
     ownedHideStartInset = current
     ownedHideTargetInset = target.points
     ownedHideStartTime = CACurrentMediaTime()
-    ownedHidePadding = bar.restingPadding
+    ownedHidePadding = band.restingPadding
     let link = CADisplayLink(target: self, selector: #selector(tickOwnedCollapse))
     link.add(to: .main, forMode: .common)
     ownedHideLink = link
@@ -437,7 +457,7 @@ class KeyboardManager {
 
   @objc
   private func tickOwnedCollapse() {
-    guard let bar = hostedAccessoryBar, let flutterView = bar.superview else {
+    guard let band = hostedBand, band.view.superview != nil else {
       ownedHideLink?.invalidate()
       ownedHideLink = nil
       return
@@ -447,18 +467,19 @@ class KeyboardManager {
     let inset = ownedHideStartInset + (ownedHideTargetInset - ownedHideStartInset) * eased
     let padding = max(0, (ownedHidePadding ?? 0) - inset)
     barInset = inset
-    bar.setBottomInset(inset)
-    bar.contentPadding = padding
-    UIView.performWithoutAnimation {
-      flutterView.layoutIfNeeded()
-    }
-    publishInset(inset * (bar.window?.screen.scale ?? 1))
+    band.apply(inset: inset, padding: padding, animated: false, duration: 0, curve: 0)
+    publishInset(inset * (band.view.window?.screen.scale ?? 1))
     guard t >= 1 else { return }
     ownedHideLink?.invalidate()
     ownedHideLink = nil
     barInset = ownedHideTargetInset
-    bar.setBottomInset(ownedHideTargetInset)
-    bar.contentPadding = max(0, (ownedHidePadding ?? 0) - ownedHideTargetInset)
+    band.apply(
+      inset: ownedHideTargetInset,
+      padding: max(0, (ownedHidePadding ?? 0) - ownedHideTargetInset),
+      animated: false,
+      duration: 0,
+      curve: 0
+    )
     ownedHidePadding = nil
   }
 
@@ -508,10 +529,10 @@ class KeyboardManager {
     }
   }
 
-  /// Drives the bar and the engine inset while the keyboard is dragged.
+  /// Drives the hosted band and the engine inset while the keyboard is dragged.
   ///
-  /// The plugin owns the bar's position, so the keyboard layout guide is only used as a live *delta*
-  /// since the drag started: a guide that is stale before the drag cannot offset the bar or the
+  /// The plugin owns the band's position, so the keyboard layout guide is only used as a live *delta*
+  /// since the drag started: a guide that is stale before the drag cannot offset the band or the
   /// inset. The same computed inset moves both, so they cannot disagree.
   ///
   /// - Returns: The bottom edge of the keyboard band in screen coordinates, for the settle detection.
@@ -527,7 +548,7 @@ class KeyboardManager {
     let screen = window.screen
     let viewRect = liveScreenRect(of: flutterView, in: screen)
 
-    if let bar = hostedAccessoryBar, bar.window != nil {
+    if let band = hostedBand, band.view.window != nil {
       // The guide may not have been laid out when the drag started; take its first live reading as
       // the start instead of freezing the drag.
       if guideTopAtDragStart == nil, let guide = guideTopInView() {
@@ -545,15 +566,15 @@ class KeyboardManager {
       } else {
         inset = barInset
       }
-      // The content lifts out of the home-indicator strip as the bar reaches the bottom, instead of
-      // being pushed up after the keyboard is gone.
-      let padding = max(0, bar.restingPadding - inset)
-      if abs(inset - barInset) > 0.5 || abs(padding - bar.contentPadding) > 0.5 {
+      // The content lifts out of the home-indicator strip as the band reaches the bottom, instead
+      // of being pushed up after the keyboard is gone.
+      let padding = max(0, band.restingPadding - inset)
+      if abs(inset - barInset) > 0.5 {
         barInset = inset
-        bar.setBottomInset(inset)
-        bar.contentPadding = padding
-        // Lay out now so the frame that is about to render already has the bar in place.
-        bar.superview?.layoutIfNeeded()
+        // The band lays its own superview out (the bar's constraint change needs it; a surface
+        // only sets a transform). Laying the Flutter view out here would be a bar-only concern
+        // forced on the surface's fixed-layout engine on every tick.
+        band.apply(inset: inset, padding: padding, animated: false, duration: 0, curve: 0)
       }
       publishInset(inset * screen.scale)
       return viewRect.maxY - inset
@@ -585,22 +606,42 @@ class KeyboardManager {
   /// The native half of the probe: what the engine has, what the bar is drawn at, and where the
   /// guide is. Pair it with the Dart "metrics" line to see the frame the list is laid out in.
   private func traceInteractiveFrame() {
-    guard hostedAccessoryBar?.window != nil else { return }
+    guard let band = hostedBand, band.view.window != nil,
+      let flutterView = flutterViewController?.view, flutterView.window != nil
+    else {
+      return
+    }
     let refresh = interactiveTrackingDisplayLink.map { $0.targetTimestamp - $0.timestamp } ?? 0
+    let surface = band as? CIKHostedSurface
+    // For a surface the drawn position is a transform, so the trace reports the translation; the
+    // keyboard inset it was computed from is the same number for both (the guide delta), so the
+    // bar's `bandInset` is only printed for a bar.
+    let movement = surface != nil
+      ? "bandTranslation=" + CIKTrace.points(surface?.presentedTranslation(in: flutterView))
+      : "bandInset=" + CIKTrace.points(band.presentedKeyboardInset(in: flutterView))
     CIKTrace.log(
       "frame",
       "epoch=" + CIKTrace.seconds(Date().timeIntervalSince1970 * 1000)
         + " t=" + CIKTrace.seconds(CACurrentMediaTime())
         + " refresh=" + CIKTrace.seconds(refresh)
         + " inset=" + CIKTrace.points(readPhysicalViewInsetBottom())
-        + " bar=" + CIKTrace.points(hostedAccessoryBar?.frame.maxY)
-        + " barShown=" + CIKTrace.points(hostedAccessoryBar?.layer.presentation()?.frame.maxY)
+        + " bandBottom=" + CIKTrace.points(band.presentedBottom(in: flutterView))
+        + " " + movement
+        + " modelInset=" + CIKTrace.points(barInset)
+        + " surface=" + (surface != nil ? "yes" : "no")
         + " guideTop=" + CIKTrace.points(guideTopInView())
     )
   }
 
   /// Writes the bottom inset of the engine, in physical pixels.
   private func publishInset(_ inset: CGFloat) {
+    // The *drag* write is off for a surface: it moves itself natively and the main engine must not
+    // resize under the app bar. Every other write - the release and the plugin's own collapse -
+    // stays on, so the main engine never keeps a stale inset after a zero-duration hide.
+    guard publishesInsetToEngine || !isTrackingKeyboard else {
+      CIKTrace.log("inset", "surface=yes tracked=yes inset=" + CIKTrace.points(inset))
+      return
+    }
     guard inset != lastReportedInset else { return }
     lastReportedInset = inset
     // Stop the engine's own inset animation, if one is in flight, only now that there is a value to

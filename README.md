@@ -14,9 +14,9 @@ frame after UIKit's keyboard, so it trails the keyboard while it moves, and a na
 no longer a Flutter widget.
 
 This plugin solves both by hosting a **second Flutter engine** inside the real keyboard container:
-UIKit positions the container (pinned to the keyboard layout guide), Flutter draws the bar inside
-it. You get a normal Flutter widget tree — `TextField`, `Material`, anything — glued to the
-top edge of the keyboard on open, drag, release and at rest.
+the plugin positions the container itself, from the live keyboard position on every frame, while
+Flutter draws the bar inside it. You get a normal Flutter widget tree — `TextField`, `Material`,
+anything — glued to the top edge of the keyboard on open, drag, release and at rest.
 
 ## Install
 
@@ -234,6 +234,73 @@ Column(
 )
 ```
 
+## The hosted keyboard surface (frame-locked chat)
+
+A hosted **surface** is the same trick applied to the whole chat area: the list and the composer
+live in the second engine, inside a native container that tracks the keyboard. The engine view
+keeps a fixed frame and size and is moved by a transform, so during a drag the hosted engine does
+no layout, no rebuild and no raster at all — its cached pixels move with the keyboard on the
+keyboard's own clock. The list cannot lag the composer, and the composer cannot lag the keyboard,
+because all three are one surface moved by one number.
+
+The app bar, the page background and route chrome stay in the main engine; the scrolling content
+and its composer live in the surface isolate.
+
+```dart
+// main isolate: the surface takes the content area, the app bar stays here
+Scaffold(
+  resizeToAvoidBottomInset: false,
+  appBar: AppBar(title: const Text('Chat')),
+  body: Stack(
+    children: [
+      CupertinoHostedKeyboardSurface(
+        entrypoint: 'surfaceMain',
+        libraryURI: 'package:my_app/chat_surface.dart',
+        controller: _controller,
+        fallback: const InAppChat(), // shown on iOS < 15 or if hosting fails
+      ),
+      // the home-indicator strip under the engine view, painted by the main engine
+      Align(
+        alignment: Alignment.bottomCenter,
+        child: SizedBox(
+          height: MediaQuery.paddingOf(context).bottom,
+          child: ColoredBox(color: composerColor),
+        ),
+      ),
+    ],
+  ),
+)
+```
+
+```dart
+// surface isolate: the list + composer, filling the fixed-size surface
+@pragma('vm:entry-point')
+void surfaceMain() => runCupertinoKeyboardSurface(
+  (context, controller) => MyChatSurface(controller: controller),
+);
+```
+
+What to know before using it:
+
+- The surface rectangle must be the whole content area under the app bar: full width and down to
+  the Flutter view's bottom. The page around it must not resize for the keyboard
+  (`resizeToAvoidBottomInset: false`, no inset-driven padding) and the app bar must be static — the
+  surface cannot react to a collapsing bar.
+- The surface isolate has a fixed layout: do not size anything from `MediaQuery.viewInsets` and do
+  not resize for the keyboard. While the keyboard is dragged the native container already moves the
+  content, so pin the list's scroll offset on `CupertinoAccessoryController.onKeyboardDragging`
+  instead of letting it scroll a second time.
+- The surface is a native view above the Flutter content: routes and overlays in the main engine
+  are covered while it is shown. It hides itself when its route is not current; overlays over the
+  chat (menus, sheets) must be hosted inside the surface isolate. v1 does not animate route
+  transitions around it.
+- One hosted thing per app: a newer surface (or bar) displaces the previous one; the displaced
+  widget is told through the `hostedAccessoryReleased` event and a surface re-hosts itself when its
+  route is current again. The bar does not re-host on its own.
+- iOS 15+ only; pass a real `fallback` for older systems. The plugin added the surface so that a
+  screen that needs zero lag does not have to switch to `resizeToAvoidBottomInset: true` (which
+  cannot remove the frame anyway).
+
 ## API reference
 
 ### Main isolate
@@ -247,6 +314,9 @@ Column(
   - `void invoke(String method, [Object? arguments])` — send to the bar.
   - `void Function(String method, Object? arguments)? onInvoke` — receive from the bar.
   - `VoidCallback? onReady` — the bar installed its handler.
+- `CupertinoHostedKeyboardSurface({required String entrypoint, required String libraryURI, CupertinoHostedInputAccessoryController? controller, bool hidden = false, Widget? fallback})`
+  hosts the whole content area in the second engine (see above). It reports its rect to native,
+  hides while its route is not current, and renders `fallback` when hosting is unavailable.
 - `CupertinoInteractiveKeyboard({required Widget child})` — the area where the interactive
   keyboard dismissal is enabled; put your scrollable inside.
 - `CupertinoInputAccessory({required Widget child})` — the classic in-app bar.
@@ -261,9 +331,13 @@ Column(
 
 - `runCupertinoAccessory(CupertinoAccessoryBuilder builder)` — run the bar; the builder gets a
   `CupertinoAccessoryController`.
+- `runCupertinoKeyboardSurface(CupertinoAccessoryBuilder builder)` — run the surface; the builder
+  gets the whole fixed-size surface and must not report a content height.
 - `CupertinoAccessoryController`
   - `void invoke(String method, [Object? arguments])` — send to the app.
   - `void Function(String method, Object? arguments)? onInvoke` — receive from the app.
+  - `void Function(bool dragging)? onKeyboardDragging` — the interactive drag state, forwarded to a
+    surface only; pin the list's scroll offset while it is true.
 
 ### Notes
 
@@ -285,12 +359,15 @@ Column(
   `MediaQuery.viewInsets.bottom` into the list's bottom padding instead of resizing the body. The
   list's viewport then never changes size during a drag, so there is no moving clip edge and no
   scroll-offset correction; `CupertinoKeyboardAccessory` still reserves the composer's height in the
-  layout.
+  layout. The list still follows the keyboard on the Flutter clock, so it can trail the composer by
+  a frame; use a hosted surface when that is not acceptable.
 
 ## Example app
 
 The `example/` project is a runnable gallery. Routes:
 
+- `/hosted_surface` — the hosted frame-locked chat surface: list and composer in the second
+  engine, moved with the keyboard.
 - `/hosted_accessory` — the hosted Flutter composer on a chat-like screen (recommended path).
 - `/input_accessory` — the classic in-app Flutter accessory.
 - `/simple_scroll_view` — minimal interactive keyboard.

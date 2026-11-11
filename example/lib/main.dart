@@ -1,4 +1,5 @@
 import 'package:example/catalog.dart';
+import 'package:example/hosted_surface_screen.dart';
 import 'package:example/keyboard_accessory.dart';
 import 'package:example/nested_navigation.dart';
 import 'package:example/reversed_scroll_view.dart';
@@ -19,6 +20,7 @@ class MyApp extends StatelessWidget {
         "/": (context) => const Catalog(),
         "/simple_scroll_view": (context) => const SimpleScrollView(),
         "/input_accessory": (context) => const KeyboardAccessory(),
+        "/hosted_surface": (context) => const HostedSurfaceScreen(),
         "/nested_navigation": (context) => const NestedNavigation(),
         "/reversed_scroll_view": (context) => const ReversedScrollView(),
       },

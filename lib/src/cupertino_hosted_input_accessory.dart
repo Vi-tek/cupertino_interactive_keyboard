@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cupertino_interactive_keyboard/cupertino_interactive_keyboard_platform_interface.dart';
+import 'package:cupertino_interactive_keyboard/src/host_id.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -79,6 +80,14 @@ class _CupertinoKeyboardAccessoryState
   late final CupertinoHostedInputAccessoryController _controller;
   StreamSubscription<Map<String, Object?>>? _events;
 
+  /// This widget's host id, so a `released` event only clears ownership when
+  /// it names the host this widget created (one hosted thing per app: a newer
+  /// surface can displace the bar).
+  int? _hostId;
+
+  /// Whether native currently hosts the bar for this widget.
+  bool _hosted = false;
+
   /// The total bar height reported by native, including the bottom safe area.
   double? _reportedHeight;
 
@@ -105,7 +114,9 @@ class _CupertinoKeyboardAccessoryState
   @override
   void didUpdateWidget(CupertinoKeyboardAccessory oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!_isIOS) {
+    // A released bar no longer owns the host: it must not hide, disarm or
+    // resize whatever newer host (a surface) took its place.
+    if (!_isIOS || !_hosted) {
       return;
     }
     if (widget.hidden != oldWidget.hidden) {
@@ -125,8 +136,11 @@ class _CupertinoKeyboardAccessoryState
   @override
   void dispose() {
     _events?.cancel();
-    if (_isIOS) {
-      CupertinoInteractiveKeyboardPlatform.instance.removeHostedAccessory();
+    // Only the widget that owns the host may tear it down: a released bar was
+    // already displaced and must not kill the newer host.
+    if (_isIOS && _hosted) {
+      CupertinoInteractiveKeyboardPlatform.instance
+          .removeHostedAccessory(id: _hostId);
     }
     super.dispose();
   }
@@ -163,16 +177,31 @@ class _CupertinoKeyboardAccessoryState
   }
 
   Future<void> _create() async {
+    final id = nextHostedThingId();
     final height = await CupertinoInteractiveKeyboardPlatform.instance
         .createHostedAccessory(
       entrypoint: widget.entrypoint,
       libraryURI: widget.libraryURI,
       height: widget.height ?? 56,
       hidden: widget.hidden,
+      id: id,
     );
-    if (!mounted || height == null) {
+    if (!mounted) {
+      // The widget went away while the engine was starting: the bar it just
+      // created has no owner any more.
+      if (height != null) {
+        // Only the host this widget created: a newer widget may own the
+        // plugin by now.
+        CupertinoInteractiveKeyboardPlatform.instance
+            .removeHostedAccessory(id: id);
+      }
       return;
     }
+    if (height == null) {
+      return;
+    }
+    _hosted = true;
+    _hostId = id;
     setState(() {
       _reportedHeight = height;
       _heightDurationMs = 0;
@@ -204,6 +233,15 @@ class _CupertinoKeyboardAccessoryState
           event['method'] as String? ?? '',
           event['arguments'],
         );
+        break;
+      case 'released':
+        // A newer host displaced the bar: stop owning it so dispose cannot tear
+        // the newer host down. The bar does not re-host on its own; remount it
+        // to get it back.
+        if (_hostId != null && event['id'] == _hostId) {
+          _hostId = null;
+          _hosted = false;
+        }
         break;
     }
   }

@@ -14,6 +14,11 @@ struct NativeAccessoryConfig {
   /// Whether the bar starts hidden. A hidden bar keeps its engine alive but is neither drawn nor
   /// hit-tested, so it can be shown again on the next frame.
   let hidden: Bool
+  /// The rectangle the hosted content covers, in points, when the app hosts a surface instead of a
+  /// bar. Nil means bar mode.
+  let rect: CGRect?
+  /// The caller's host id, echoed in the released event that displaces it.
+  let id: Int?
 
   init?(arguments: Any?) {
     guard
@@ -29,6 +34,18 @@ struct NativeAccessoryConfig {
     self.libraryURI = libraryURI
     self.height = CGFloat(height.doubleValue)
     self.hidden = arguments["hidden"] as? Bool ?? false
+    if
+      let rect = arguments["rect"] as? [String: Any],
+      let x = (rect["x"] as? NSNumber)?.doubleValue,
+      let y = (rect["y"] as? NSNumber)?.doubleValue,
+      let width = (rect["width"] as? NSNumber)?.doubleValue,
+      let height = (rect["height"] as? NSNumber)?.doubleValue
+    {
+      self.rect = CGRect(x: x, y: y, width: width, height: height)
+    } else {
+      self.rect = nil
+    }
+    self.id = (arguments["id"] as? NSNumber)?.intValue
   }
 }
 
@@ -168,3 +185,54 @@ class CIKHostedAccessoryBar: UIView {
     )
   }
 }
+
+extension CIKHostedAccessoryBar: CIKHostedBand {
+  var view: UIView { self }
+
+  func apply(inset: CGFloat, padding: CGFloat, animated: Bool, duration: Double, curve: UInt) {
+    // The bar's height changes with the padding, and the app's reserved height follows that height
+    // on the same clock. Report the animation before the height changes so the Dart side can use it.
+    if abs(contentPadding - padding) > 0.05 {
+      heightAnimation = animated ? (max(duration, 0.2), curve) : (0, 0)
+    }
+    setBottomInset(inset)
+    contentPadding = padding
+    let layout: () -> Void = { [weak self] in self?.superview?.layoutIfNeeded() }
+    guard animated, duration > 0 else {
+      UIView.performWithoutAnimation(layout)
+      return
+    }
+    UIView.animate(
+      withDuration: duration,
+      delay: 0,
+      options: UIView.AnimationOptions(rawValue: curve << 16),
+      animations: layout
+    )
+  }
+
+  @discardableResult
+  func freezeAtVisiblePosition() -> CGFloat? {
+    guard let superview else { return nil }
+    let frame = layer.presentation()?.frame ?? layer.frame
+    let visibleInset = max(0, superview.bounds.maxY - frame.maxY)
+    layer.removeAllAnimations()
+    setBottomInset(visibleInset)
+    if visibleInset > 0.5 {
+      contentPadding = 0
+    }
+    UIView.performWithoutAnimation { superview.layoutIfNeeded() }
+    return visibleInset
+  }
+
+  func presentedBottom(in view: UIView) -> CGFloat? {
+    guard let superview else { return nil }
+    let frame = layer.presentation()?.frame ?? layer.frame
+    return superview.convert(CGPoint(x: 0, y: frame.maxY), to: view).y
+  }
+
+  func presentedKeyboardInset(in view: UIView) -> CGFloat? {
+    guard let bottom = presentedBottom(in: view) else { return nil }
+    return max(0, view.bounds.maxY - bottom)
+  }
+}
+

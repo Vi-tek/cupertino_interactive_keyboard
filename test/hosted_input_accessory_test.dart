@@ -63,12 +63,13 @@ void main() {
       await tester.pump();
 
       expect(plugin.hostedAccessoryCreateCalls, hasLength(1));
-      expect(plugin.hostedAccessoryCreateCalls.single, {
-        'entrypoint': entrypoint,
-        'libraryURI': libraryURI,
-        'height': 48.0,
-        'hidden': false,
-      });
+      final createCall = plugin.hostedAccessoryCreateCalls.single;
+      expect(createCall['entrypoint'], entrypoint);
+      expect(createCall['libraryURI'], libraryURI);
+      expect(createCall['height'], 48.0);
+      expect(createCall['hidden'], false);
+      // The host id lets a released event name the bar it displaced.
+      expect(createCall['id'], isA<int>());
 
       expect(
         tester.getSize(find.byType(CupertinoKeyboardAccessory)).height,
@@ -104,6 +105,9 @@ void main() {
   testWidgets(
     'routes ready and invoke to the controller and forwards controller calls',
     (tester) async {
+      // Hosting succeeds, so the widget owns the host and tears it down on
+      // dispose.
+      plugin.createResultHeight = 96;
       final controller = CupertinoHostedInputAccessoryController();
       var readyCalls = 0;
       String? invokedMethod;
@@ -152,6 +156,9 @@ void main() {
   testWidgets(
     'updates the native height and reserves the new requested height until it reports back',
     (tester) async {
+      // Hosting succeeds, so the widget owns the host and forwards height
+      // changes to it.
+      plugin.createResultHeight = 96;
       await tester.pumpWidget(accessory());
       await tester.pump();
 
@@ -180,6 +187,7 @@ void main() {
   testWidgets(
     'creates hidden and toggles the bar without recreating the engine',
     (tester) async {
+      plugin.createResultHeight = 96;
       await tester.pumpWidget(accessory(hidden: true));
       await tester.pump();
 
@@ -311,4 +319,27 @@ void main() {
       {'type': 'invoke', 'method': 'ping', 'arguments': null},
     ]);
   });
+
+  testWidgets(
+    'a released bar stops driving the host and does not tear it down',
+    (tester) async {
+      plugin.createResultHeight = 96;
+      await tester.pumpWidget(accessory());
+      await tester.pump();
+      final hostId = plugin.hostedAccessoryCreateCalls.single['id'];
+
+      // A newer surface displaced the bar.
+      plugin.emitHostedAccessoryEvent({'type': 'released', 'id': hostId});
+      await tester.pump();
+
+      // The displaced bar must not hide or disarm whatever host exists now.
+      await tester.pumpWidget(accessory(hidden: true));
+      await tester.pump();
+      expect(plugin.hostedAccessoryHiddenCalls, isEmpty);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(plugin.removeHostedAccessoryCalls, 0);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
 }

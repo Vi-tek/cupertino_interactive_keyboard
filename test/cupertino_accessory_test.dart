@@ -134,4 +134,74 @@ void main() {
 
     expect(invokes, 0);
   });
+
+  testWidgets('runCupertinoKeyboardSurface is a full-size host without a sizer',
+      (tester) async {
+    late CupertinoAccessoryController controller;
+
+    runCupertinoKeyboardSurface((context, value) {
+      controller = value;
+      return const Align(child: Text('surface'));
+    });
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('surface'), findsOneWidget);
+    expect(controller, isA<CupertinoAccessoryController>());
+    expect(tester.getSize(find.byType(Align)), const Size(800, 600));
+    expect(calls.where((call) => call.method == 'ready'), hasLength(1));
+    expect(calls.where((call) => call.method == 'contentHeight'), isEmpty);
+  });
+
+  testWidgets('the surface host unfocuses the composer when hidden',
+      (tester) async {
+    final node = FocusNode();
+    addTearDown(node.dispose);
+
+    runCupertinoKeyboardSurface(
+      (context, value) => Focus(focusNode: node, child: const Text('composer')),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    node.requestFocus();
+    await tester.pump();
+    expect(node.hasFocus, isTrue);
+
+    await push(tester, 'invoke', {
+      'method': 'hidden',
+      'arguments': {'hidden': true},
+    });
+    expect(node.hasFocus, isFalse);
+  });
+
+  testWidgets('forwards keyboardDragging to the controller, not to onInvoke',
+      (tester) async {
+    late CupertinoAccessoryController controller;
+
+    runCupertinoKeyboardSurface((context, value) {
+      controller = value;
+      return const SizedBox.shrink();
+    });
+    await tester.pump();
+    await tester.pump();
+
+    final dragging = <bool>[];
+    final invoked = <String>[];
+    controller.onKeyboardDragging = dragging.add;
+    controller.onInvoke = (method, arguments) => invoked.add(method);
+
+    await push(tester, 'invoke', {
+      'method': 'keyboardDragging',
+      'arguments': {'dragging': true},
+    });
+    await push(tester, 'invoke', {
+      'method': 'keyboardDragging',
+      'arguments': {'dragging': false},
+    });
+
+    expect(dragging, [true, false]);
+    expect(invoked, isEmpty);
+  });
 }

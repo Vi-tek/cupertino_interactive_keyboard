@@ -16,6 +16,7 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     // The app can react to the interactive drag itself, not only to the inset changing.
     KeyboardManager.shared.onKeyboardDraggingChanged = { [weak instance] dragging in
       instance?.channel?.invokeMethod("keyboardDragging", arguments: ["dragging": dragging])
+      instance?.forwardKeyboardDraggingToHosted(dragging)
     }
     registrar.publish(instance)
     registrar.addMethodCallDelegate(instance, channel: channel)
@@ -29,6 +30,11 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
   let inputView = CIKInputAccessoryView()
   private var channel: FlutterMethodChannel?
   private var hostedAccessoryBar: CIKHostedAccessoryBar?
+  private var hostedSurface: CIKHostedSurface?
+  /// A surface rectangle that arrived while the keyboard was being dragged; applied on settle.
+  private var pendingSurfaceRect: CGRect?
+  /// The id of the hosted thing, so a displaced widget can tell it was the one released.
+  private var hostedThingId: Int?
   private var accessoryChannel: FlutterMethodChannel?
   private var accessoryEngine: FlutterEngine?
   private var accessoryViewController: FlutterViewController?
@@ -146,6 +152,20 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
         self.createHostedAccessory(config, result: result)
       }
       
+    case "updateHostedAccessoryRect":
+      guard
+        let args = call.arguments as? [String: Any],
+        let rectMap = args["rect"] as? [String: Any],
+        let rect = CupertinoInteractiveKeyboardPlugin.rect(from: rectMap)
+      else {
+        return result(FlutterMethodNotImplemented)
+      }
+
+      DispatchQueue.main.async {
+        self.updateHostedSurfaceRect(rect)
+        result(nil)
+      }
+
     case "updateHostedAccessoryHeight":
       guard
         let args = call.arguments as? [String: Any],
@@ -190,8 +210,9 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
       }
       
     case "removeHostedAccessory":
+      let id = ((call.arguments as? [String: Any])?["id"] as? NSNumber)?.intValue
       DispatchQueue.main.async {
-        self.tearDownHostedAccessory()
+        self.removeHostedAccessory(id: id)
         result(nil)
       }
       
@@ -220,9 +241,15 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     // The Dart widget may create the bar before `initialize` runs; the tracking needs the view
     // controller either way.
     KeyboardManager.shared.flutterViewController = flutterViewController
-    
+
+    if let rect = config.rect {
+      createHostedSurface(config, rect: rect, flutterViewController: flutterViewController, result: result)
+      return
+    }
+
+    announceReleasedHostedThing()
     tearDownHostedAccessory()
-    
+
     let bar = CIKHostedAccessoryBar(config: config)
     // The bar's own view stays transparent: the accessory engine draws the app's bar, and
     // whatever the app paints behind it (or leaves unpainted) has to stay visible. An app that
@@ -267,46 +294,22 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
       ])
     }
     
-    let project = FlutterDartProject()
-    let group = engineGroup
-      ?? FlutterEngineGroup(name: "cupertino_interactive_keyboard.accessory", project: project)
-    engineGroup = group
-    // The bar is a single screen, not a routed app: the engine must not inherit the app's
-    // launch route (deep link, `flutter run --route`), which its MaterialApp would then fail
-    // to navigate to.
-    let engine = group.makeEngine(
-      withEntrypoint: config.entrypoint,
-      libraryURI: config.libraryURI,
-      initialRoute: "/"
-    )
+    let hosted = makeHostedEngine(config)
+    flutterViewController.addChild(hosted.viewController)
+    bar.host(hosted.viewController.view)
+    hosted.viewController.didMove(toParent: flutterViewController)
     
-    let accessoryViewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
-    // The accessory engine's view is transparent too, so the bar only shows the pixels its Flutter
-    // app actually paints. Without this the engine's own opaque layer hides the app behind the
-    // bar and every bar would need a background of its own.
-    accessoryViewController.isViewOpaque = false
-    accessoryViewController.view.backgroundColor = .clear
-    flutterViewController.addChild(accessoryViewController)
-    bar.host(accessoryViewController.view)
-    accessoryViewController.didMove(toParent: flutterViewController)
-    
-    // The accessory engine renders the bar and answers with `ready` once its handler is installed;
-    // messages sent before that are queued and flushed then.
-    let accessoryChannel = FlutterMethodChannel(
-      name: "cupertino_interactive_keyboard/accessory",
-      binaryMessenger: engine.binaryMessenger
-    )
-    accessoryChannel.setMethodCallHandler { [weak self] call, result in
-      self?.handleAccessoryCall(call, result: result)
-    }
-    
-    self.accessoryEngine = engine
-    self.accessoryViewController = accessoryViewController
-    self.accessoryChannel = accessoryChannel
+    self.accessoryEngine = hosted.engine
+    self.accessoryViewController = hosted.viewController
+    self.accessoryChannel = hosted.channel
     self.hostedAccessoryBar = bar
+    self.hostedSurface = nil
+    self.hostedThingId = config.id
     // The bar is the inset driver's band even while hidden: it is still laid out and positioned, and
     // an app whose bar is hidden has to position its own composer with the inset alone.
-    KeyboardManager.shared.hostedAccessoryBar = bar
+    KeyboardManager.shared.hostedBand = bar
+    KeyboardManager.shared.hostedSurfaceViewController = nil
+    KeyboardManager.shared.publishesInsetToEngine = true
     
     // Lay the bar out once so the height handed back already reflects its real safe area.
     flutterView.layoutIfNeeded()
@@ -319,6 +322,203 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     result(["height": Double(bar.barHeight)])
   }
   
+  /// Creates the second engine that renders the hosted bar or surface.
+  ///
+  /// Both modes share the engine, the transparent view and the bridge channel; only the container
+  /// they are put into differs.
+  private func makeHostedEngine(
+    _ config: NativeAccessoryConfig
+  ) -> (engine: FlutterEngine, viewController: FlutterViewController, channel: FlutterMethodChannel) {
+    let project = FlutterDartProject()
+    let group = engineGroup
+      ?? FlutterEngineGroup(name: "cupertino_interactive_keyboard.accessory", project: project)
+    engineGroup = group
+    // The hosted thing is a single screen, not a routed app: the engine must not inherit the app's
+    // launch route (deep link, `flutter run --route`), which its MaterialApp would then fail to
+    // navigate to.
+    let engine = group.makeEngine(
+      withEntrypoint: config.entrypoint,
+      libraryURI: config.libraryURI,
+      initialRoute: "/"
+    )
+
+    let accessoryViewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
+    // The hosted engine's view is transparent too, so it only shows the pixels its Flutter app
+    // actually paints: the app behind the bar or the surface keeps showing through.
+    accessoryViewController.isViewOpaque = false
+    accessoryViewController.view.backgroundColor = .clear
+
+    // The hosted engine renders the app's content and answers with `ready` once its handler is
+    // installed; messages sent before that are queued and flushed then.
+    let accessoryChannel = FlutterMethodChannel(
+      name: "cupertino_interactive_keyboard/accessory",
+      binaryMessenger: engine.binaryMessenger
+    )
+    accessoryChannel.setMethodCallHandler { [weak self] call, result in
+      self?.handleAccessoryCall(call, result: result)
+    }
+
+    return (engine, accessoryViewController, accessoryChannel)
+  }
+
+  /// Creates the hosted surface: the whole content area above the keyboard in a second engine.
+  ///
+  /// The surface container clips a fixed-size engine view that is moved by a transform; the
+  /// rectangle the app reports decides the container's top and the engine view's height (the
+  /// safe-area bottom is excluded, so the hosted engine's safe area never changes).
+  private func createHostedSurface(
+    _ config: NativeAccessoryConfig,
+    rect: CGRect,
+    flutterViewController: FlutterViewController,
+    result: @escaping FlutterResult
+  ) {
+    announceReleasedHostedThing()
+    tearDownHostedAccessory()
+
+    let hosted = makeHostedEngine(config)
+    let flutterView = flutterViewController.view!
+    flutterView.layoutIfNeeded()
+    let safeBottom = flutterView.safeAreaInsets.bottom
+
+    let surface = CIKHostedSurface()
+    surface.isHidden = config.hidden
+    flutterView.addSubview(surface)
+    surface.attach(to: flutterView, top: rect.minY, safeAreaBottom: safeBottom)
+    let contentHeight = CIKHostedSurface.contentHeight(
+      parentHeight: flutterView.bounds.height,
+      top: rect.minY,
+      safeAreaBottom: safeBottom
+    )
+
+    flutterViewController.addChild(hosted.viewController)
+    surface.host(hosted.viewController.view, contentHeight: contentHeight)
+    hosted.viewController.didMove(toParent: flutterViewController)
+    flutterView.layoutIfNeeded()
+
+    self.accessoryEngine = hosted.engine
+    self.accessoryViewController = hosted.viewController
+    self.accessoryChannel = hosted.channel
+    self.hostedAccessoryBar = nil
+    self.hostedSurface = surface
+    self.pendingSurfaceRect = nil
+    self.hostedThingId = config.id
+
+    KeyboardManager.shared.hostedBand = config.hidden ? nil : surface
+    KeyboardManager.shared.hostedSurfaceViewController = hosted.viewController
+    KeyboardManager.shared.publishesInsetToEngine = false
+    KeyboardManager.shared.onTrackingStopped = { [weak self] in
+      self?.applyPendingSurfaceRect()
+    }
+    let inset = KeyboardManager.shared.currentBarInset
+    surface.apply(
+      inset: inset,
+      padding: max(0, safeBottom - inset),
+      animated: false,
+      duration: 0,
+      curve: 0
+    )
+
+    CIKTrace.log(
+      "hosted",
+      "surface top=" + CIKTrace.points(rect.minY)
+        + " height=" + CIKTrace.points(contentHeight)
+        + " inset=" + CIKTrace.points(inset)
+        + " hidden=" + String(config.hidden)
+    )
+    result(["height": Double(contentHeight)])
+  }
+
+  /// Applies a surface rectangle, or defers it while the keyboard is being dragged.
+  ///
+  /// A rectangle change mid-drag would resize the hosted engine and re-lay the content out on a
+  /// frame that is already in flight - the very lag the surface exists to remove.
+  private func updateHostedSurfaceRect(_ rect: CGRect) {
+    guard hostedSurface != nil else { return }
+    if KeyboardManager.shared.isTrackingKeyboard {
+      pendingSurfaceRect = rect
+      return
+    }
+    applySurfaceRect(rect)
+  }
+
+  private func applyPendingSurfaceRect() {
+    guard pendingSurfaceRect != nil else { return }
+    // The gesture may have been released; let the keyboard's release animation finish before the
+    // hosted engine is resized, so no metrics push lands while the surface is still moving.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+      guard let self, let rect = self.pendingSurfaceRect else { return }
+      // A new drag started meanwhile: keep the rectangle pending for the next settle.
+      if KeyboardManager.shared.isTrackingKeyboard { return }
+      self.pendingSurfaceRect = nil
+      self.applySurfaceRect(rect)
+    }
+  }
+
+  private func applySurfaceRect(_ rect: CGRect) {
+    guard
+      let surface = hostedSurface,
+      let flutterView = KeyboardManager.shared.flutterViewController?.view
+    else {
+      return
+    }
+    flutterView.layoutIfNeeded()
+    let safeBottom = flutterView.safeAreaInsets.bottom
+    surface.update(
+      top: rect.minY,
+      safeAreaBottom: safeBottom,
+      parentHeight: flutterView.bounds.height
+    )
+    let inset = KeyboardManager.shared.currentBarInset
+    surface.apply(
+      inset: inset,
+      padding: max(0, safeBottom - inset),
+      animated: false,
+      duration: 0,
+      curve: 0
+    )
+    flutterView.layoutIfNeeded()
+    CIKTrace.log(
+      "hosted",
+      "surface rect top=" + CIKTrace.points(rect.minY)
+        + " height=" + CIKTrace.points(surface.bounds.height)
+    )
+  }
+
+  /// Tells the main isolate that the hosted thing it owns is about to be replaced.
+  ///
+  /// The new Dart widget may be created while the previous one is still mounted (a route pushed
+  /// over another); that widget must know its engine is gone so it can re-host when it is visible
+  /// again instead of showing a blank area.
+  private func announceReleasedHostedThing() {
+    guard hostedAccessoryBar != nil || hostedSurface != nil else { return }
+    channel?.invokeMethod(
+      "hostedAccessoryReleased",
+      arguments: ["id": hostedThingId ?? -1]
+    )
+  }
+
+  /// Forwards the interactive drag state to the hosted app, so it can pin its scroll offset: the
+  /// surface itself already moves the content, and letting the list scroll too would double it.
+  private func forwardKeyboardDraggingToHosted(_ dragging: Bool) {
+    guard hostedSurface != nil else { return }
+    invokeHostedAccessory([
+      "method": "keyboardDragging",
+      "arguments": ["dragging": dragging],
+    ])
+  }
+
+  private static func rect(from map: [String: Any]) -> CGRect? {
+    guard
+      let x = (map["x"] as? NSNumber)?.doubleValue,
+      let y = (map["y"] as? NSNumber)?.doubleValue,
+      let width = (map["width"] as? NSNumber)?.doubleValue,
+      let height = (map["height"] as? NSNumber)?.doubleValue
+    else {
+      return nil
+    }
+    return CGRect(x: x, y: y, width: width, height: height)
+  }
+
   /// Handles the calls of the accessory engine.
   ///
   /// The accessory app only signals that it is ready and forwards the messages it sends; the
@@ -367,11 +567,51 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
   /// it again costs a frame. The bar keeps being the keyboard band the inset driver follows: a
   /// hidden view still lays out, so its frame and the inset driver still follow the keyboard.
   private func updateHostedAccessoryHidden(_ hidden: Bool) {
+    if let surface = hostedSurface, let viewController = accessoryViewController {
+      // The hosted app must drop focus before the view is hidden: a hidden view keeps first
+      // responder and the keyboard would stay up over whatever covers the surface.
+      invokeHostedAccessory(["method": "hidden", "arguments": ["hidden": hidden]])
+      surface.isHidden = hidden
+      if hidden {
+        viewController.view.endEditing(true)
+        KeyboardManager.shared.stopInteractiveTracking()
+        KeyboardManager.shared.hostedBand = nil
+      } else {
+        let inset = KeyboardManager.shared.currentBarInset
+        KeyboardManager.shared.hostedBand = surface
+        // Showing again can happen while the keyboard is still animating; follow it with the
+        // keyboard's curve instead of snapping the surface into place.
+        surface.apply(
+          inset: inset,
+          padding: max(0, surface.restingPadding - inset),
+          animated: true,
+          duration: 0.25,
+          curve: 7
+        )
+      }
+      CIKTrace.log("hosted", "surface hidden=" + String(hidden))
+      return
+    }
     hostedAccessoryBar?.isHidden = hidden
     // A hidden bar keeps being the live band: it still lays out, and while the bar is hidden the app
     // positions its own composer with the inset alone.
-    KeyboardManager.shared.hostedAccessoryBar = hostedAccessoryBar
+    KeyboardManager.shared.hostedBand = hostedAccessoryBar
     CIKTrace.log("hosted", "hidden=" + String(hidden))
+  }
+
+  /// Removes the hosted thing, but only when [id] is nil or names the current host.
+  ///
+  /// A widget that unmounts while its engine is still starting must not tear down whatever host a
+  /// newer widget created in that window.
+  private func removeHostedAccessory(id: Int?) {
+    if let id, let hostedThingId, id != hostedThingId {
+      CIKTrace.log(
+        "hosted",
+        "remove ignored id=" + String(id) + " current=" + String(hostedThingId)
+      )
+      return
+    }
+    tearDownHostedAccessory()
   }
 
   /// Sends a message to the accessory app, queueing it until the app reported `ready`.
@@ -396,9 +636,16 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     accessoryEngine = nil
     hostedAccessoryBar?.removeFromSuperview()
     hostedAccessoryBar = nil
+    hostedSurface?.removeFromSuperview()
+    hostedSurface = nil
+    pendingSurfaceRect = nil
+    hostedThingId = nil
     accessoryReady = false
     pendingAccessoryInvocations = []
-    KeyboardManager.shared.hostedAccessoryBar = nil
+    KeyboardManager.shared.hostedBand = nil
+    KeyboardManager.shared.hostedSurfaceViewController = nil
+    KeyboardManager.shared.publishesInsetToEngine = true
+    KeyboardManager.shared.onTrackingStopped = nil
     CIKTrace.log("hosted", "tear down")
   }
   

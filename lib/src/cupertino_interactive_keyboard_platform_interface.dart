@@ -73,14 +73,20 @@ abstract class CupertinoInteractiveKeyboardPlatform extends PlatformInterface {
   /// Creates the hosted accessory running [entrypoint] from [libraryURI].
   ///
   /// [hidden] creates the bar without showing it, so an app that starts with
-  /// the bar off screen does not flash it. Returns the total bar height,
-  /// including the bottom safe area, or null on platforms that cannot host
-  /// one.
+  /// the bar off screen does not flash it. [rect], when given, hosts a keyboard
+  /// surface (a full-size second engine) instead of a bar: it is the surface's
+  /// rectangle in logical pixels, which the plugin uses as its top and derives
+  /// the rest from the Flutter view. [id] identifies the caller's host, so the
+  /// released event can name the host it displaced. Returns the total bar
+  /// height, including the bottom safe area, or null on platforms that cannot
+  /// host one.
   Future<double?> createHostedAccessory({
     required String entrypoint,
     required String libraryURI,
     required double height,
     bool hidden = false,
+    Rect? rect,
+    int? id,
   }) {
     throw UnimplementedError(
       'createHostedAccessory() has not been implemented.',
@@ -104,6 +110,17 @@ abstract class CupertinoInteractiveKeyboardPlatform extends PlatformInterface {
     );
   }
 
+  /// Re-reports the hosted surface's rectangle, in logical pixels.
+  ///
+  /// Called when the surface's size or position changes without a drag: a
+  /// rotation, a split view resize or an app bar change. A hosted bar ignores
+  /// it.
+  Future<void> updateHostedAccessoryRect(Rect rect) {
+    throw UnimplementedError(
+      'updateHostedAccessoryRect() has not been implemented.',
+    );
+  }
+
   /// Invokes [method] with [arguments] in the accessory isolate.
   Future<void> invokeHostedAccessory(String method, Object? arguments) {
     throw UnimplementedError(
@@ -111,9 +128,14 @@ abstract class CupertinoInteractiveKeyboardPlatform extends PlatformInterface {
     );
   }
 
-  Future<void> removeHostedAccessory() {
+  /// Removes the hosted accessory and destroys its engine.
+  ///
+  /// [id] names the host the caller owns: when it does not match the host that is alive, the
+  /// call is ignored, so a widget that unmounts while its engine was starting cannot tear down a
+  /// newer host.
+  Future<void> removeHostedAccessory({int? id}) {
     throw UnimplementedError(
-      'removeHostedAccessory() has not been implemented.',
+      'removeHostedAccessory({int? id}) has not been implemented.',
     );
   }
 

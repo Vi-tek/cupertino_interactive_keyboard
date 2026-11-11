@@ -15,6 +15,14 @@ class CupertinoAccessoryController {
   /// Called with every method call the main isolate invokes on the accessory.
   void Function(String method, Object? arguments)? onInvoke;
 
+  /// Called with the interactive keyboard drag state while a hosted keyboard
+  /// surface is being dragged down.
+  ///
+  /// The surface's whole view already moves natively with the keyboard, so
+  /// scrollable content inside it must pin its offset instead of scrolling as
+  /// well. Only a surface receives this; the accessory bar never does.
+  void Function(bool dragging)? onKeyboardDragging;
+
   /// Invokes [method] with [arguments] in the main isolate.
   void invoke(String method, [Object? arguments]) {
     accessoryChannel.invokeMethod<void>(
@@ -45,12 +53,43 @@ void runCupertinoAccessory(CupertinoAccessoryBuilder builder) {
   runApp(CupertinoAccessoryHost(builder: builder));
 }
 
-/// The chrome around an accessory UI: owns the channel and routes calls
-/// between the main isolate and [builder]. [runCupertinoAccessory] pumps it.
+/// Runs [builder] as the Flutter half of a hosted keyboard surface.
+///
+/// Use it from a top-level entrypoint the app points at with the
+/// `CupertinoHostedKeyboardSurface` widget's entrypoint:
+///
+/// ```dart
+/// @pragma('vm:entry-point')
+/// void surfaceMain() => runCupertinoKeyboardSurface(
+///   (context, controller) => MyChat(controller: controller),
+/// );
+/// ```
+///
+/// Unlike [runCupertinoAccessory] this is a full-size host: the builder gets
+/// the whole fixed-size surface and no content height is reported. The layout
+/// must fill that surface and must not depend on `MediaQuery.viewInsets`: the
+/// surface's keyboard inset stays 0 by design, and the native container moves
+/// the whole view instead.
+void runCupertinoKeyboardSurface(CupertinoAccessoryBuilder builder) {
+  runApp(CupertinoAccessoryHost(builder: builder, fullSize: true));
+}
+
+/// The chrome around an accessory UI or a surface: owns the channel and routes
+/// calls between the main isolate and [builder]. [runCupertinoAccessory] and
+/// [runCupertinoKeyboardSurface] pump it.
 class CupertinoAccessoryHost extends StatefulWidget {
-  const CupertinoAccessoryHost({super.key, required this.builder});
+  const CupertinoAccessoryHost({
+    super.key,
+    required this.builder,
+    this.fullSize = false,
+  });
 
   final CupertinoAccessoryBuilder builder;
+
+  /// Whether the host fills a fixed-size keyboard surface instead of sizing
+  /// itself to its content: no scrollable sizer and no content-height
+  /// reporting.
+  final bool fullSize;
 
   @override
   State<CupertinoAccessoryHost> createState() => _CupertinoAccessoryHostState();
@@ -87,17 +126,34 @@ class _CupertinoAccessoryHostState extends State<CupertinoAccessoryHost> {
       );
     }
     final arguments = (call.arguments as Map?) ?? const {};
-    _controller.onInvoke?.call(
-      arguments['method'] as String? ?? '',
-      arguments['arguments'],
-    );
+    final method = arguments['method'] as String? ?? '';
+    final payload = arguments['arguments'];
+    switch (method) {
+      // The surface was hidden natively; drop focus so this isolate's focus
+      // state matches the dismissed keyboard. The app does not need the call.
+      case 'hidden':
+        if (payload is Map && payload['hidden'] == true) {
+          FocusManager.instance.primaryFocus?.unfocus();
+        }
+        return;
+      case 'keyboardDragging':
+        _controller.onKeyboardDragging?.call(
+          payload is Map && payload['dragging'] == true,
+        );
+        return;
+    }
+    _controller.onInvoke?.call(method, payload);
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: _AccessorySizer(builder: widget.builder, controller: _controller),
+      home: widget.fullSize
+          ? Builder(
+              builder: (context) => widget.builder(context, _controller),
+            )
+          : _AccessorySizer(builder: widget.builder, controller: _controller),
     );
   }
 }

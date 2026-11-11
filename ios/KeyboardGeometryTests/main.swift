@@ -228,6 +228,58 @@ expect(
   "the tracking stops once the keyboard came to rest"
 )
 
+// A hosted surface keeps a fixed frame and is moved by a transform, so its translation is the
+// keyboard position minus the resting safe area, clamped at rest.
+expect(
+  KeyboardGeometry.surfaceTranslation(inset: 0, restingPadding: 34),
+  0,
+  "a resting surface is not translated"
+)
+
+expect(
+  KeyboardGeometry.surfaceTranslation(inset: 34, restingPadding: 34),
+  0,
+  "a surface at the home-indicator inset is not translated"
+)
+
+expect(
+  KeyboardGeometry.surfaceTranslation(inset: 336, restingPadding: 34),
+  -302,
+  "a fully raised surface moves by the keyboard height minus the resting inset"
+)
+
+expect(
+  KeyboardGeometry.surfaceTranslation(inset: 10, restingPadding: 34),
+  0,
+  "a surface never translates above its resting position"
+)
+
+expect(
+  KeyboardGeometry.surfaceContentHeight(rectHeight: 700, safeAreaBottom: 34),
+  666,
+  "the hosted content height excludes the resting safe area"
+)
+
+expect(
+  KeyboardGeometry.surfaceContentHeight(rectHeight: 10, safeAreaBottom: 34),
+  0,
+  "the hosted content height never goes negative"
+)
+
+// The trace/freeze read the keyboard inset back out of the surface's translation; the round trip
+// is the coupling a drag seed relies on.
+expect(
+  KeyboardGeometry.surfaceKeyboardInset(translation: 0, restingPadding: 34),
+  34,
+  "a resting surface reports its resting inset from the zero translation"
+)
+
+expect(
+  KeyboardGeometry.surfaceKeyboardInset(translation: -302, restingPadding: 34),
+  336,
+  "a raised surface reports the keyboard height from its translation"
+)
+
 if failures > 0 {
   print("\(failures) check(s) failed")
   exit(1)

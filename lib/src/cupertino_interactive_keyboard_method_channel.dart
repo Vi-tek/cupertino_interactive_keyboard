@@ -38,12 +38,7 @@ class MethodChannelCupertinoInteractiveKeyboard
   Future<void> setScrollableRect(int id, Rect rect) {
     return methodChannel.invokeMethod('setScrollableRect', {
       'id': id,
-      'rect': {
-        'x': rect.left,
-        'y': rect.top,
-        'width': rect.width,
-        'height': rect.height,
-      },
+      'rect': _rectArguments(rect),
     });
   }
 
@@ -75,6 +70,8 @@ class MethodChannelCupertinoInteractiveKeyboard
     required String libraryURI,
     required double height,
     bool hidden = false,
+    Rect? rect,
+    int? id,
   }) async {
     final result = await methodChannel.invokeMethod<Map<Object?, Object?>>(
       'createHostedAccessory',
@@ -83,6 +80,8 @@ class MethodChannelCupertinoInteractiveKeyboard
         'libraryURI': libraryURI,
         'height': height,
         'hidden': hidden,
+        if (rect != null) 'rect': _rectArguments(rect),
+        if (id != null) 'id': id,
       },
     );
     return (result?['height'] as num?)?.toDouble();
@@ -103,6 +102,13 @@ class MethodChannelCupertinoInteractiveKeyboard
   }
 
   @override
+  Future<void> updateHostedAccessoryRect(Rect rect) {
+    return methodChannel.invokeMethod('updateHostedAccessoryRect', {
+      'rect': _rectArguments(rect),
+    });
+  }
+
+  @override
   Future<void> invokeHostedAccessory(String method, Object? arguments) {
     return methodChannel.invokeMethod('invokeHostedAccessory', {
       'method': method,
@@ -111,9 +117,21 @@ class MethodChannelCupertinoInteractiveKeyboard
   }
 
   @override
-  Future<void> removeHostedAccessory() {
-    return methodChannel.invokeMethod('removeHostedAccessory');
+  Future<void> removeHostedAccessory({int? id}) {
+    if (id == null) {
+      return methodChannel.invokeMethod('removeHostedAccessory');
+    }
+    return methodChannel.invokeMethod('removeHostedAccessory', {'id': id});
   }
+
+  /// The channel shape of a logical-pixel rectangle, shared by every call that
+  /// carries one.
+  Map<String, double> _rectArguments(Rect rect) => {
+        'x': rect.left,
+        'y': rect.top,
+        'width': rect.width,
+        'height': rect.height,
+      };
 
   Future<Object?> _handleMethodCall(MethodCall call) {
     final arguments = (call.arguments as Map?) ?? const {};
@@ -132,6 +150,12 @@ class MethodChannelCupertinoInteractiveKeyboard
         return Future.value();
       case 'hostedAccessoryReady':
         _hostedAccessoryEvents.add({'type': 'ready'});
+        return Future.value();
+      case 'hostedAccessoryReleased':
+        _hostedAccessoryEvents.add({
+          'type': 'released',
+          'id': (arguments['id'] as num?)?.toInt(),
+        });
         return Future.value();
       case 'hostedAccessoryInvoke':
         _hostedAccessoryEvents.add({
