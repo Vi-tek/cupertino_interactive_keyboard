@@ -27,6 +27,8 @@ void main() {
     bool hidden = false,
     Widget? fallback,
     CupertinoHostedInputAccessoryController? controller,
+    bool behind = false,
+    bool interactive = true,
   }) {
     return CupertinoHostedKeyboardSurface(
       entrypoint: entrypoint,
@@ -34,6 +36,8 @@ void main() {
       hidden: hidden,
       fallback: fallback,
       controller: controller,
+      behind: behind,
+      interactive: interactive,
     );
   }
 
@@ -43,6 +47,8 @@ void main() {
     bool hidden = false,
     Widget? fallback,
     CupertinoHostedInputAccessoryController? controller,
+    bool behind = false,
+    bool interactive = true,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -50,6 +56,8 @@ void main() {
           hidden: hidden,
           fallback: fallback,
           controller: controller,
+          behind: behind,
+          interactive: interactive,
         ),
       ),
     );
@@ -364,6 +372,168 @@ void main() {
       expect(events, [
         {'type': 'released', 'id': null},
       ]);
+    },
+  );
+
+  testWidgets(
+    'behind creates the surface behind the app and opens the hole',
+    (tester) async {
+      await tester.pumpWidget(
+        app(behind: true, fallback: const Text(fallbackText)),
+      );
+      await tester.pump();
+
+      expect(plugin.hostedAccessoryCreateCalls.single['behind'], true);
+      expect(plugin.hostedSurfaceInteractiveCalls, [true]);
+      // The hole is see-through while the surface is live: the fallback is not
+      // painted over it.
+      expect(find.text(fallbackText), findsNothing);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'behind closes the hole with the fallback while hidden and reopens it on show',
+    (tester) async {
+      await tester.pumpWidget(
+        app(behind: true, fallback: const Text(fallbackText)),
+      );
+      await tester.pump();
+      expect(find.text(fallbackText), findsNothing);
+
+      await tester.pumpWidget(
+        app(behind: true, hidden: true, fallback: const Text(fallbackText)),
+      );
+      await tester.pump();
+      // A closed hole must not reveal the window behind it.
+      expect(find.text(fallbackText), findsOneWidget);
+      expect(plugin.hostedSurfaceInteractiveCalls.last, false);
+
+      await tester.pumpWidget(
+        app(behind: true, fallback: const Text(fallbackText)),
+      );
+      await tester.pump();
+      expect(find.text(fallbackText), findsNothing);
+      expect(plugin.hostedSurfaceInteractiveCalls.last, true);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'behind keeps the hole open under a modal but stops passing touches',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          routes: {
+            '/': (context) => Scaffold(
+              body: surface(behind: true, fallback: const Text(fallbackText)),
+            ),
+            '/second': (context) => const SizedBox.shrink(),
+          },
+        ),
+      );
+      await tester.pump();
+      expect(plugin.hostedSurfaceInteractiveCalls, [true]);
+
+      tester.state<NavigatorState>(find.byType(Navigator)).pushNamed('/second');
+      await tester.pumpAndSettle();
+
+      // The sheet draws above the live list: the hole must stay open (no fallback), and the main
+      // engine must own the touches.
+      expect(find.text(fallbackText, skipOffstage: false), findsNothing);
+      expect(plugin.hostedSurfaceInteractiveCalls.last, false);
+      // The surface is not hidden, only its touches are withheld.
+      expect(plugin.hostedAccessoryHiddenCalls, isNot(contains(true)));
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'behind starts hidden and non-interactive when created hidden',
+    (tester) async {
+      await tester.pumpWidget(
+        app(behind: true, hidden: true, fallback: const Text(fallbackText)),
+      );
+      await tester.pump();
+
+      expect(plugin.hostedAccessoryCreateCalls.single['hidden'], true);
+      expect(plugin.hostedSurfaceInteractiveCalls, [false]);
+      expect(find.text(fallbackText), findsOneWidget);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'behind never passes touches while the widget is non-interactive',
+    (tester) async {
+      await tester.pumpWidget(
+        app(behind: true, interactive: false, fallback: const Text(fallbackText)),
+      );
+      await tester.pump();
+
+      expect(plugin.hostedSurfaceInteractiveCalls, [false]);
+      expect(find.text(fallbackText), findsNothing);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'the forward mode never asks for touch passthrough',
+    (tester) async {
+      await tester.pumpWidget(app());
+      await tester.pump();
+      await tester.pumpWidget(app(hidden: true));
+      await tester.pump();
+
+      expect(plugin.hostedSurfaceInteractiveCalls, isEmpty);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'behind forwards interactive changes while it is hosting',
+    (tester) async {
+      await tester.pumpWidget(app(behind: true));
+      await tester.pump();
+      expect(plugin.hostedSurfaceInteractiveCalls, [true]);
+
+      await tester.pumpWidget(app(behind: true, interactive: false));
+      await tester.pump();
+      expect(plugin.hostedSurfaceInteractiveCalls, [true, false]);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'sends the behind flag and the interactive call on the channel',
+    (tester) async {
+      const channel = MethodChannel('cupertino_interactive_keyboard');
+      final implementation = MethodChannelCupertinoInteractiveKeyboard();
+      final calls = <MethodCall>[];
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return call.method == 'createHostedAccessory'
+            ? {'height': 1.0}
+            : null;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+      await implementation.createHostedAccessory(
+        entrypoint: entrypoint,
+        libraryURI: libraryURI,
+        height: 10,
+        rect: const Rect.fromLTWH(0, 0, 100, 100),
+        behind: true,
+      );
+      await implementation.setHostedSurfaceInteractive(false);
+
+      expect(calls.map((call) => call.method), [
+        'createHostedAccessory',
+        'setHostedSurfaceInteractive',
+      ]);
+      expect((calls[0].arguments as Map)['behind'], true);
+      expect((calls[1].arguments as Map)['interactive'], false);
     },
   );
 

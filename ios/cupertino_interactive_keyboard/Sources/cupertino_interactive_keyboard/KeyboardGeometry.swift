@@ -112,6 +112,28 @@ enum KeyboardGeometry {
     max(0, rectHeight - safeAreaBottom)
   }
 
+  /// The part of a behind surface's hole that can receive touches at this keyboard inset.
+  ///
+  /// The app reports the hole it paints (the list area; its bottom is the band's top, which may or
+  /// may not be the view's bottom). The band, the composer and anything else the main engine paints
+  /// over the hole ride the keyboard, so the live bottom is the hole's own bottom (clamped to the
+  /// view) raised by the inset. A touch below it belongs to the main engine.
+  ///
+  /// - Parameters:
+  ///   - hole: The hole the app paints over the surface, in view points.
+  ///   - viewHeight: The Flutter view's height, in points.
+  ///   - inset: The keyboard inset, in points.
+  /// - Returns: The touch-passing part of the hole.
+  static func liveHole(hole: CGRect, viewHeight: CGFloat, inset: CGFloat) -> CGRect {
+    let bottom = min(hole.maxY, viewHeight) - max(0, inset)
+    return CGRect(
+      x: hole.minX,
+      y: hole.minY,
+      width: hole.width,
+      height: max(0, bottom - hole.minY)
+    )
+  }
+
   /// The keyboard inset a hosted surface's translation was computed from.
   ///
   /// A surface is untranslated for every keyboard inset up to its resting safe-area inset, so this

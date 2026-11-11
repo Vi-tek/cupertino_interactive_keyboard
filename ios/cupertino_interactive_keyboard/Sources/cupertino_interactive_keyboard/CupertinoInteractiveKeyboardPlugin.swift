@@ -6,6 +6,7 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     _ = KeyboardManager.shared
     swizzleFlutterViewController()
     swizzleFlutterTextInputView()
+    swizzleFlutterViewHitTest()
     
     let channel = FlutterMethodChannel(name: "cupertino_interactive_keyboard", binaryMessenger: registrar.messenger())
     let instance = CupertinoInteractiveKeyboardPlugin()
@@ -33,6 +34,10 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
   private var hostedSurface: CIKHostedSurface?
   /// A surface rectangle that arrived while the keyboard was being dragged; applied on settle.
   private var pendingSurfaceRect: CGRect?
+  /// The main view's opacity before a behind surface made it non-opaque.
+  private var savedViewOpaque: Bool?
+  /// The view controller whose opacity a behind surface changed.
+  private weak var savedViewOpaqueViewController: FlutterViewController?
   /// The id of the hosted thing, so a displaced widget can tell it was the one released.
   private var hostedThingId: Int?
   private var accessoryChannel: FlutterMethodChannel?
@@ -152,6 +157,20 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
         self.createHostedAccessory(config, result: result)
       }
       
+    case "setHostedSurfaceInteractive":
+      guard
+        let args = call.arguments as? [String: Any],
+        let interactive = args["interactive"] as? Bool
+      else {
+        return result(FlutterMethodNotImplemented)
+      }
+
+      DispatchQueue.main.async {
+        KeyboardManager.shared.hostedSurfaceInteractive = interactive
+        CIKTrace.log("hosted", "surface interactive=" + String(interactive))
+        result(nil)
+      }
+
     case "updateHostedAccessoryRect":
       guard
         let args = call.arguments as? [String: Any],
@@ -242,6 +261,14 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     // controller either way.
     KeyboardManager.shared.flutterViewController = flutterViewController
 
+    // A behind surface is a sibling of the Flutter view; without a superview there is nowhere to
+    // put it and the previous host must not be torn down for a transient condition.
+    if config.behind {
+      guard config.rect != nil, flutterViewController.view.superview != nil else {
+        return result(FlutterMethodNotImplemented)
+      }
+    }
+
     if let rect = config.rect {
       createHostedSurface(config, rect: rect, flutterViewController: flutterViewController, result: result)
       return
@@ -309,6 +336,8 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     // an app whose bar is hidden has to position its own composer with the inset alone.
     KeyboardManager.shared.hostedBand = bar
     KeyboardManager.shared.hostedSurfaceViewController = nil
+    KeyboardManager.shared.hostedSurfaceView = nil
+    KeyboardManager.shared.hostedSurfaceInteractive = false
     KeyboardManager.shared.publishesInsetToEngine = true
     
     // Lay the bar out once so the height handed back already reflects its real safe area.
@@ -381,14 +410,38 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     let safeBottom = flutterView.safeAreaInsets.bottom
 
     let surface = CIKHostedSurface()
+    surface.isBehind = config.behind
     surface.isHidden = config.hidden
-    flutterView.addSubview(surface)
-    surface.attach(to: flutterView, top: rect.minY, safeAreaBottom: safeBottom)
-    let contentHeight = CIKHostedSurface.contentHeight(
-      parentHeight: flutterView.bounds.height,
-      top: rect.minY,
-      safeAreaBottom: safeBottom
-    )
+    let contentHeight: CGFloat
+    if config.behind {
+      // Behind mode: the surface goes below the Flutter view and covers it, so the app can paint a
+      // transparent hole over it and keep its overlays above the live list. The engine view never
+      // resizes; the keyboard translates it.
+      guard let parent = flutterView.superview else {
+        return result(nil)
+      }
+      // Insert first, then constrain: the surface is a sibling of the Flutter view, and constraints
+      // between the two need a common ancestor before they are activated.
+      parent.insertSubview(surface, belowSubview: flutterView)
+      surface.attach(to: flutterView, top: 0, safeAreaBottom: 0)
+      contentHeight = flutterView.bounds.height
+      surface.holeRect = rect
+      // The Flutter layer must be non-opaque for the surface to show through the hole. An app that
+      // relies on behind mode should set this before the first frame; this is the safety net.
+      savedViewOpaque = flutterViewController.isViewOpaque
+      savedViewOpaqueViewController = flutterViewController
+      flutterViewController.isViewOpaque = false
+      KeyboardManager.shared.hostedSurfaceInteractive = false
+      KeyboardManager.shared.hostedSurfaceFlutterView = flutterView
+    } else {
+      flutterView.addSubview(surface)
+      surface.attach(to: flutterView, top: rect.minY, safeAreaBottom: safeBottom)
+      contentHeight = CIKHostedSurface.contentHeight(
+        parentHeight: flutterView.bounds.height,
+        top: rect.minY,
+        safeAreaBottom: safeBottom
+      )
+    }
 
     flutterViewController.addChild(hosted.viewController)
     surface.host(hosted.viewController.view, contentHeight: contentHeight)
@@ -405,6 +458,7 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
 
     KeyboardManager.shared.hostedBand = config.hidden ? nil : surface
     KeyboardManager.shared.hostedSurfaceViewController = hosted.viewController
+    KeyboardManager.shared.hostedSurfaceView = surface
     KeyboardManager.shared.publishesInsetToEngine = false
     KeyboardManager.shared.onTrackingStopped = { [weak self] in
       self?.applyPendingSurfaceRect()
@@ -412,7 +466,7 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     let inset = KeyboardManager.shared.currentBarInset
     surface.apply(
       inset: inset,
-      padding: max(0, safeBottom - inset),
+      padding: config.behind ? 0 : max(0, safeBottom - inset),
       animated: false,
       duration: 0,
       curve: 0
@@ -424,6 +478,7 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
         + " height=" + CIKTrace.points(contentHeight)
         + " inset=" + CIKTrace.points(inset)
         + " hidden=" + String(config.hidden)
+        + " behind=" + String(config.behind)
     )
     result(["height": Double(contentHeight)])
   }
@@ -433,7 +488,13 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
   /// A rectangle change mid-drag would resize the hosted engine and re-lay the content out on a
   /// frame that is already in flight - the very lag the surface exists to remove.
   private func updateHostedSurfaceRect(_ rect: CGRect) {
-    guard hostedSurface != nil else { return }
+    guard let surface = hostedSurface else { return }
+    // A behind surface only stores the hole and the passthrough rectangle; its engine view never
+    // resizes, so the update can never land on an in-flight frame and does not need deferring.
+    if surface.isBehind {
+      applySurfaceRect(rect)
+      return
+    }
     if KeyboardManager.shared.isTrackingKeyboard {
       pendingSurfaceRect = rect
       return
@@ -459,6 +520,17 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
       let surface = hostedSurface,
       let flutterView = KeyboardManager.shared.flutterViewController?.view
     else {
+      return
+    }
+    if surface.isBehind {
+      // The engine view covers the screen and never resizes during a drag; only the hole the app
+      // paints and the passthrough rectangle move. Do NOT re-apply the inset here: the manager owns
+      // the transform, and a model write during a keyboard animation would snap the list.
+      surface.holeRect = rect
+      let viewHeight = KeyboardManager.shared.hostedSurfaceFlutterView?.bounds.height
+      if let viewHeight, viewHeight > 0 {
+        surface.updateContentHeight(viewHeight)
+      }
       return
     }
     flutterView.layoutIfNeeded()
@@ -644,8 +716,21 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     pendingAccessoryInvocations = []
     KeyboardManager.shared.hostedBand = nil
     KeyboardManager.shared.hostedSurfaceViewController = nil
+    KeyboardManager.shared.hostedSurfaceView = nil
+    KeyboardManager.shared.hostedSurfaceFlutterView = nil
+    KeyboardManager.shared.hostedSurfaceInteractive = false
     KeyboardManager.shared.publishesInsetToEngine = true
     KeyboardManager.shared.onTrackingStopped = nil
+    if let saved = savedViewOpaque {
+      let owner = savedViewOpaqueViewController
+        ?? KeyboardManager.shared.flutterViewController
+        ?? findFlutterViewController()
+      owner?.isViewOpaque = saved
+      if owner != nil {
+        savedViewOpaque = nil
+      }
+      savedViewOpaqueViewController = nil
+    }
     CIKTrace.log("hosted", "tear down")
   }
   

@@ -158,7 +158,7 @@ class _ChatSurfaceState extends State<ChatSurface> {
               // Pinned for the duration of the drag: the native container
               // already moves the whole surface, so scrolling as well would
               // double the motion.
-              physics: _dragging ? const NeverScrollableScrollPhysics() : null,
+              physics: AlwaysScrollableScrollPhysics(),
               padding: EdgeInsets.fromLTRB(
                 16 + safe.left,
                 16,

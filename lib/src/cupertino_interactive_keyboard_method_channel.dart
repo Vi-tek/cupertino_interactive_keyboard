@@ -72,6 +72,7 @@ class MethodChannelCupertinoInteractiveKeyboard
     bool hidden = false,
     Rect? rect,
     int? id,
+    bool behind = false,
   }) async {
     final result = await methodChannel.invokeMethod<Map<Object?, Object?>>(
       'createHostedAccessory',
@@ -82,6 +83,7 @@ class MethodChannelCupertinoInteractiveKeyboard
         'hidden': hidden,
         if (rect != null) 'rect': _rectArguments(rect),
         if (id != null) 'id': id,
+        if (behind) 'behind': true,
       },
     );
     return (result?['height'] as num?)?.toDouble();
@@ -98,6 +100,13 @@ class MethodChannelCupertinoInteractiveKeyboard
   Future<void> updateHostedAccessoryHeight(double height) {
     return methodChannel.invokeMethod('updateHostedAccessoryHeight', {
       'height': height,
+    });
+  }
+
+  @override
+  Future<void> setHostedSurfaceInteractive(bool interactive) {
+    return methodChannel.invokeMethod('setHostedSurfaceInteractive', {
+      'interactive': interactive,
     });
   }
 

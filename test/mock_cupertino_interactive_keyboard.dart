@@ -33,6 +33,9 @@ class MockCupertinoInteractiveKeyboard
   /// a test unmount a widget while its engine is starting.
   Future<double?>? createHostedAccessoryFuture;
 
+  /// Interactive values passed to [setHostedSurfaceInteractive], in call order.
+  final hostedSurfaceInteractiveCalls = <bool>[];
+
   /// The total height returned by [createHostedAccessory]; null keeps the
   /// widget on its placeholder height until a height event arrives.
   double? createResultHeight;
@@ -57,6 +60,7 @@ class MockCupertinoInteractiveKeyboard
     bool hidden = false,
     Rect? rect,
     int? id,
+    bool behind = false,
   }) {
     hostedAccessoryCreateCalls.add({
       'entrypoint': entrypoint,
@@ -65,6 +69,7 @@ class MockCupertinoInteractiveKeyboard
       'hidden': hidden,
       if (rect != null) 'rect': rect,
       if (id != null) 'id': id,
+      if (behind) 'behind': true,
     });
     return createHostedAccessoryFuture ?? Future.value(createResultHeight);
   }
@@ -90,6 +95,12 @@ class MockCupertinoInteractiveKeyboard
   @override
   Future<void> invokeHostedAccessory(String method, Object? arguments) {
     hostedAccessoryInvokes.add({'method': method, 'arguments': arguments});
+    return Future.value();
+  }
+
+  @override
+  Future<void> setHostedSurfaceInteractive(bool interactive) {
+    hostedSurfaceInteractiveCalls.add(interactive);
     return Future.value();
   }
 

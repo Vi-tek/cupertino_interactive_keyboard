@@ -21,6 +21,18 @@ class KeyboardManager {
   /// own inset must stay 0 or the hosted content would re-lay out on every keyboard frame.
   weak var hostedSurfaceViewController: FlutterViewController?
 
+  /// The hosted surface, when one is hosted.
+  weak var hostedSurfaceView: CIKHostedSurface?
+
+  /// The Flutter view a behind surface was created in.
+  ///
+  /// Passthrough must compare against this and not the mutable `flutterViewController` global: a
+  /// second FlutterViewController (add-to-app) can reassign it.
+  weak var hostedSurfaceFlutterView: UIView?
+
+  /// Whether a behind surface's hole lets touches through to it.
+  var hostedSurfaceInteractive = false
+
   /// Whether the plugin writes its drag inset into the main engine's viewport metrics.
   ///
   /// A hosted surface moves itself natively; the main engine is inset-immune while one is hosted,
@@ -36,6 +48,34 @@ class KeyboardManager {
 
   func isHostedSurface(_ viewController: FlutterViewController) -> Bool {
     hostedSurfaceViewController === viewController
+  }
+
+  /// Whether a touch belongs to a behind surface instead of the Flutter view.
+  ///
+  /// The live hole is the rectangle the app reports with its bottom raised by the keyboard, because
+  /// the band and composer ride the keyboard over the hole. A touch on them must stay in the main
+  /// engine; only the list area falls through.
+  func shouldPassThroughFlutterTouch(_ view: UIView, point: CGPoint) -> Bool {
+    guard
+      hostedSurfaceInteractive,
+      let surface = hostedSurfaceView,
+      surface.isBehind,
+      surface.window != nil,
+      !surface.isHidden,
+      view === hostedSurfaceFlutterView
+    else {
+      return false
+    }
+    // Use the presented translation, not the notification's target: while a keyboard animation is
+    // in flight the target is already the end value, which would shrink the live hole before the
+    // band has moved.
+    let presentedInset = max(0, -surface.presentedTranslation(in: view))
+    let live = KeyboardGeometry.liveHole(
+      hole: surface.holeRect,
+      viewHeight: view.bounds.height,
+      inset: presentedInset
+    )
+    return live.contains(point)
   }
 
   private(set) var barInset: CGFloat = 0

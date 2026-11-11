@@ -17,10 +17,22 @@ class CupertinoHostedInputAccessoryController {
   /// Called once the accessory engine is listening for calls.
   VoidCallback? onReady;
 
+  /// Lets touches inside a behind surface's hole reach the surface.
+  ///
+  /// Turn it off while an overlay or a modal owns the screen; ignored by the
+  /// forward modes.
+  void setInteractive(bool interactive) {
+    unawaited(
+      CupertinoInteractiveKeyboardPlatform.instance
+          .setHostedSurfaceInteractive(interactive)
+          // iOS-only: a host without the plugin has nothing to tell.
+          .catchError((Object _) {}),
+    );
+  }
+
   /// Invokes [method] with [arguments] in the accessory isolate.
   ///
-  /// Calls made before the accessory is ready are queued by the plugin until
-  /// it is.
+  /// Calls made before the accessory are queued by the plugin until it is.
   void invoke(String method, [Object? arguments]) {
     CupertinoInteractiveKeyboardPlatform.instance
         .invokeHostedAccessory(method, arguments);

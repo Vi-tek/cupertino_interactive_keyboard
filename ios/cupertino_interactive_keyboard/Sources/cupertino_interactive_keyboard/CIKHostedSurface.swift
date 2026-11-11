@@ -12,9 +12,21 @@ final class CIKHostedSurface: UIView {
   /// The home-indicator inset the surface rests above, in points.
   private(set) var restingPadding: CGFloat = 0
 
+  /// Whether the surface is inserted below the Flutter view.
+  ///
+  /// A behind surface shows through the transparent hole the app paints; the hit-test passthrough
+  /// uses [holeRect] to decide which touches belong to it.
+  var isBehind = false
+
+  /// The hole the app paints over the surface, in the Flutter view's coordinates.
+  var holeRect: CGRect = .zero
+
   private weak var hostedView: UIView?
   private var topConstraint: NSLayoutConstraint?
   private var hostedHeightConstraint: NSLayoutConstraint?
+
+  /// The height the hosted engine view keeps, in points.
+  private(set) var contentHeight: CGFloat = 0
 
   init() {
     super.init(frame: .zero)
@@ -57,6 +69,7 @@ final class CIKHostedSurface: UIView {
   func host(_ contentView: UIView, contentHeight: CGFloat) {
     contentView.translatesAutoresizingMaskIntoConstraints = false
     addSubview(contentView)
+    self.contentHeight = contentHeight
     let height = contentView.heightAnchor.constraint(equalToConstant: contentHeight)
     NSLayoutConstraint.activate([
       contentView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -80,6 +93,17 @@ final class CIKHostedSurface: UIView {
       top: top,
       safeAreaBottom: safeAreaBottom
     )
+    setNeedsLayout()
+  }
+
+  /// Updates the hosted engine view height (rotation, split view) for a behind surface.
+  ///
+  /// Only called while the keyboard is idle; a resize mid-drag would re-lay the hosted content out
+  /// on a frame that is already in flight.
+  func updateContentHeight(_ height: CGFloat) {
+    guard abs(height - contentHeight) > 0.5 else { return }
+    contentHeight = height
+    hostedHeightConstraint?.constant = height
     setNeedsLayout()
   }
 

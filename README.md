@@ -301,6 +301,43 @@ What to know before using it:
   screen that needs zero lag does not have to switch to `resizeToAvoidBottomInset: true` (which
   cannot remove the frame anyway).
 
+## The behind surface (an app screen that keeps its overlays)
+
+A behind surface is the same hosted content area, inserted **below** the Flutter view instead of
+above it. The app paints a transparent hole where the surface shows, so everything the main engine
+draws above it — bottom sheets, dialogs, overlay animations, the screen's own chrome — still renders
+over the live, natively-moved content. Use it when a screen cannot give its overlays up.
+
+```dart
+// the hole: transparent while the surface is live, the app's background otherwise
+CupertinoHostedKeyboardSurface(
+  entrypoint: 'surfaceMain',
+  libraryURI: 'package:my_app/chat_surface.dart',
+  behind: true,
+  interactive: !modalOpen, // touches fall through to the surface only while true
+  fallback: const MyBackground(), // fills the hole when hidden/covered
+)
+```
+
+Requirements and limits:
+
+- The app's root `FlutterViewController` must be non-opaque before the first frame (`isViewOpaque =
+  false` in the iOS host): the engine builds its surface from that flag, so a late change may not
+  open the hole. The plugin sets and restores it on create/teardown as a safety net.
+- The widget must be given the hole: a full-width area whose content the app paints nothing in -
+  for a chat, the list area above the app's own band. The surface engine owns that hole's
+  background and the scrolling content. (A forward surface's rectangle must instead reach the
+  Flutter view's bottom; a behind surface's may stop above its band.)
+- Touches are passed through the Flutter view to the surface only while `interactive` is true and
+  this route is current; the plugin withholds them automatically under a pushed route or a modal,
+  and the hole stays open so a sheet still draws over the live list. The passthrough rectangle
+  follows the keyboard: the app's band/composer above the surface keeps its touches.
+- The surface engine is translated by the keyboard inset and never resizes; the app sends the
+  bottom band's height over the bridge so the hosted content ends above it.
+- Because the surface is below the Flutter view, the hole's background must be painted by the
+  surface isolate; the app's `fallback` must be the same background so a covered hole never flashes
+  the window colour.
+
 ## API reference
 
 ### Main isolate
@@ -314,9 +351,12 @@ What to know before using it:
   - `void invoke(String method, [Object? arguments])` — send to the bar.
   - `void Function(String method, Object? arguments)? onInvoke` — receive from the bar.
   - `VoidCallback? onReady` — the bar installed its handler.
-- `CupertinoHostedKeyboardSurface({required String entrypoint, required String libraryURI, CupertinoHostedInputAccessoryController? controller, bool hidden = false, Widget? fallback})`
-  hosts the whole content area in the second engine (see above). It reports its rect to native,
-  hides while its route is not current, and renders `fallback` when hosting is unavailable.
+  - `void setInteractive(bool interactive)` — toggle touch passthrough for a behind surface.
+- `CupertinoHostedKeyboardSurface({required String entrypoint, required String libraryURI, CupertinoHostedInputAccessoryController? controller, bool hidden = false, Widget? fallback, bool behind = false, bool interactive = true})`
+  hosts the whole content area in the second engine (see above and "The behind surface"). It reports
+  its rect to native, hides while its route is not current, renders `fallback` when hosting is
+  unavailable or when a behind hole is closed, and forwards the interactive flag for touch
+  passthrough.
 - `CupertinoInteractiveKeyboard({required Widget child})` — the area where the interactive
   keyboard dismissal is enabled; put your scrollable inside.
 - `CupertinoInputAccessory({required Widget child})` — the classic in-app bar.

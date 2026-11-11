@@ -20,6 +20,25 @@ func expect(
 }
 
 func expect(
+  _ actual: CGRect,
+  _ expected: CGRect,
+  _ message: String,
+  accuracy: CGFloat = 0.0001
+) {
+  let equal =
+    abs(actual.origin.x - expected.origin.x) <= accuracy &&
+    abs(actual.origin.y - expected.origin.y) <= accuracy &&
+    abs(actual.width - expected.width) <= accuracy &&
+    abs(actual.height - expected.height) <= accuracy
+  if !equal {
+    print("FAIL: \(message) - expected \(expected), got \(actual)")
+    failures += 1
+  } else {
+    print("ok: \(message)")
+  }
+}
+
+func expect(
   _ actual: Bool,
   _ expected: Bool,
   _ message: String
@@ -278,6 +297,58 @@ expect(
   KeyboardGeometry.surfaceKeyboardInset(translation: -302, restingPadding: 34),
   336,
   "a raised surface reports the keyboard height from its translation"
+)
+
+// A behind surface's live hole: the app reports the list area, the band and composer above the
+// keyboard rise over it, so the touch-passing bottom is the hole's bottom raised by the inset.
+expect(
+  KeyboardGeometry.liveHole(
+    hole: CGRect(x: 0, y: 100, width: 390, height: 744),
+    viewHeight: 844,
+    inset: 0
+  ),
+  CGRect(x: 0, y: 100, width: 390, height: 744),
+  "a resting keyboard keeps the whole hole touchable"
+)
+
+expect(
+  KeyboardGeometry.liveHole(
+    hole: CGRect(x: 0, y: 100, width: 390, height: 744),
+    viewHeight: 844,
+    inset: 336
+  ),
+  CGRect(x: 0, y: 100, width: 390, height: 408),
+  "a raised keyboard lifts the band over the hole"
+)
+
+expect(
+  KeyboardGeometry.liveHole(
+    hole: CGRect(x: 0, y: 200, width: 390, height: 300),
+    viewHeight: 844,
+    inset: 100
+  ),
+  CGRect(x: 0, y: 200, width: 390, height: 200),
+  "a hole above the view bottom is trimmed by the inset from its own bottom"
+)
+
+expect(
+  KeyboardGeometry.liveHole(
+    hole: CGRect(x: 0, y: 600, width: 390, height: 60),
+    viewHeight: 844,
+    inset: 336
+  ),
+  CGRect(x: 0, y: 600, width: 390, height: 0),
+  "a hole shorter than the inset has nothing touchable"
+)
+
+expect(
+  KeyboardGeometry.liveHole(
+    hole: CGRect(x: 0, y: 100, width: 390, height: 900),
+    viewHeight: 844,
+    inset: 0
+  ),
+  CGRect(x: 0, y: 100, width: 390, height: 744),
+  "a hole larger than the view is clamped to it"
 )
 
 if failures > 0 {

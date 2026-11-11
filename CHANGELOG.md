@@ -9,6 +9,11 @@
   app; the displaced widget is told), `backend-driven` `hidden`/`keyboardDragging` messages to the
   hosted isolate, and `CupertinoAccessoryController.onKeyboardDragging`.
 * The example gains `/hosted_surface`, a frame-locked chat screen using the surface.
+* Behind surfaces: `CupertinoHostedKeyboardSurface(behind: true, interactive: ...)` inserts the
+  surface below the Flutter view so the app's own overlays, sheets and animations keep rendering
+  above the live list. The app paints a transparent hole over it and can toggle touch passthrough
+  (`CupertinoHostedInputAccessoryController.setInteractive`); the plugin handles the hole's
+  hit-testing, the keyboard translation and the main view's opacity.
 * `isKeyboardDragging`: a package-level `ValueListenable<bool>` that turns true while the interactive
   dismissal gesture drags the keyboard and false the moment the finger is released, before the
   keyboard animates back or away.

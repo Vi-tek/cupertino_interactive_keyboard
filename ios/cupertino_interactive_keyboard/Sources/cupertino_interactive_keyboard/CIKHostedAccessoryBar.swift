@@ -19,6 +19,8 @@ struct NativeAccessoryConfig {
   let rect: CGRect?
   /// The caller's host id, echoed in the released event that displaces it.
   let id: Int?
+  /// Whether the surface is inserted below the Flutter view (behind mode).
+  let behind: Bool
 
   init?(arguments: Any?) {
     guard
@@ -46,6 +48,7 @@ struct NativeAccessoryConfig {
       self.rect = nil
     }
     self.id = (arguments["id"] as? NSNumber)?.intValue
+    self.behind = arguments["behind"] as? Bool ?? false
   }
 }
 

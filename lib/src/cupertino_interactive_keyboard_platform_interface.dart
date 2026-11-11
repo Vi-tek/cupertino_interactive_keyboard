@@ -87,9 +87,21 @@ abstract class CupertinoInteractiveKeyboardPlatform extends PlatformInterface {
     bool hidden = false,
     Rect? rect,
     int? id,
+    bool behind = false,
   }) {
     throw UnimplementedError(
       'createHostedAccessory() has not been implemented.',
+    );
+  }
+
+  /// Whether touches inside a behind surface's hole reach the surface.
+  ///
+  /// A behind surface lives below the Flutter view; the plugin lets touches
+  /// through the Flutter view only while this is true, so the app turns it off
+  /// while an overlay or a modal owns the screen. Ignored by the forward modes.
+  Future<void> setHostedSurfaceInteractive(bool interactive) {
+    throw UnimplementedError(
+      'setHostedSurfaceInteractive() has not been implemented.',
     );
   }
 

@@ -40,6 +40,8 @@ class CupertinoHostedKeyboardSurface extends StatefulWidget {
     this.controller,
     this.hidden = false,
     this.fallback,
+    this.behind = false,
+    this.interactive = true,
   });
 
   /// Dart entrypoint the surface engine runs, e.g. `surfaceMain`.
@@ -59,11 +61,28 @@ class CupertinoHostedKeyboardSurface extends StatefulWidget {
   /// area stays reserved either way - unmount the widget to give it back.
   final bool hidden;
 
-  /// What to render when the surface cannot be hosted.
+  /// What to render when the surface cannot be hosted, and - in [behind] mode -
+  /// what fills the hole while the surface is hidden or not hosted.
   ///
   /// Defaults to an empty box. Shipping apps must pass a real fallback, since
   /// the hosted content simply does not exist when hosting is unavailable.
   final Widget? fallback;
+
+  /// Whether the surface is inserted *below* the Flutter view instead of above
+  /// it.
+  ///
+  /// A behind surface shows through a transparent hole the app paints, so the
+  /// main engine keeps drawing its overlays (sheets, dialogs, the message
+  /// morph) above the live list. While the surface is hidden or not hosted,
+  /// the widget renders [fallback] in the hole instead of leaving it
+  /// transparent.
+  final bool behind;
+
+  /// Whether touches inside the hole reach a [behind] surface.
+  ///
+  /// Turn it off while an overlay or a modal owns the screen; ignored by the
+  /// forward modes.
+  final bool interactive;
 
   @override
   State<CupertinoHostedKeyboardSurface> createState() =>
@@ -94,7 +113,19 @@ class _CupertinoHostedKeyboardSurfaceState
 
   bool get _isIOS => defaultTargetPlatform == TargetPlatform.iOS;
 
-  bool get _shouldHide => widget.hidden || !isRouteCurrent;
+  /// Whether the hole is closed with the app's fallback.
+  ///
+  /// A behind surface keeps its hole open under a modal route (the sheet is painted above the live
+  /// list); only an app-driven [hidden] closes it. A forward surface is covered by any other route
+  /// and hides.
+  bool get _shouldHide => widget.hidden || (!widget.behind && !isRouteCurrent);
+
+  /// Whether touches may reach a behind surface's hole right now.
+  ///
+  /// The surface stays visible under a modal, but the main engine owns the touches then, so
+  /// passthrough is on only while this route is current and the hole is open.
+  bool get _passesTouches =>
+      widget.behind && widget.interactive && !_shouldHide && isRouteCurrent;
 
   @override
   void initState() {
@@ -117,6 +148,11 @@ class _CupertinoHostedKeyboardSurfaceState
     }
     if (widget.hidden != oldWidget.hidden) {
       _syncHost();
+    }
+    if (widget.behind &&
+        widget.interactive != oldWidget.interactive &&
+        _hosted) {
+      _controller.setInteractive(_passesTouches);
     }
     if (widget.entrypoint != oldWidget.entrypoint ||
         widget.libraryURI != oldWidget.libraryURI) {
@@ -153,11 +189,22 @@ class _CupertinoHostedKeyboardSurfaceState
   @override
   Widget build(BuildContext context) {
     if (!_isIOS || _failed) {
-      return widget.fallback ?? const SizedBox.shrink();
+      return _fallbackBox();
     }
-    // Take the hosted area, so the rectangle the app declares is this widget's;
-    // paint nothing, since the native surface above already draws it.
-    return RectObserver(onChange: _handleRect, child: const SizedBox.expand());
+    // Take the hosted area, so the rectangle the app declares is this widget's.
+    // A forward surface is drawn above this engine, so the box is transparent.
+    // A behind surface shows through it, so the box is transparent only while
+    // the surface is live; otherwise the app's own background fills the hole.
+    final holeClosed = widget.behind && (!_hosted || _shouldHide);
+    return RectObserver(
+      onChange: _handleRect,
+      child: holeClosed ? _fallbackBox() : const SizedBox.expand(),
+    );
+  }
+
+  /// The area the widget occupies when the surface is not painting through it.
+  Widget _fallbackBox() {
+    return SizedBox.expand(child: widget.fallback);
   }
 
   void _handleRect(Rect rect) {
@@ -174,19 +221,23 @@ class _CupertinoHostedKeyboardSurfaceState
     }
   }
 
-  /// Logs a violation of the surface contract: the reported area must be full
-  /// width and reach the Flutter view's bottom, since native derives the
-  /// container and the engine view height from its top only.
+  /// Logs a violation of the surface contract.
+  ///
+  /// A forward surface must be a full-width area that reaches the Flutter view's bottom (native
+  /// uses its top and derives the rest). A behind surface is the area the app paints over it - the
+  /// list area above the app's own band - and only its width is constrained.
   void _checkContract(Rect rect) {
     final size = MediaQuery.maybeSizeOf(context);
     if (size == null) {
       return;
     }
-    if (rect.width < size.width - 0.5 || rect.bottom < size.height - 0.5) {
+    final needsBottom = !widget.behind;
+    if (rect.width < size.width - 0.5 ||
+        (needsBottom && rect.bottom < size.height - 0.5)) {
       debugPrint(
-        '[cik] CupertinoHostedKeyboardSurface needs a full-width area that '
-        'reaches the bottom of the screen; got $rect in a $size view. The '
-        'surface will use its top only.',
+        '[cik] CupertinoHostedKeyboardSurface needs a full-width area'
+        '${needsBottom ? " that reaches the bottom of the screen" : ""}; '
+        'got $rect in a $size view.',
       );
     }
   }
@@ -198,9 +249,19 @@ class _CupertinoHostedKeyboardSurfaceState
       return;
     }
     if (_hosted) {
+      final hide = _shouldHide;
       CupertinoInteractiveKeyboardPlatform.instance
-          .updateHostedAccessoryHidden(_shouldHide);
-    } else if (!_failed && isRouteCurrent && !widget.hidden && _rect != null) {
+          .updateHostedAccessoryHidden(hide);
+      if (widget.behind) {
+        // A hidden or covered surface must not keep swallowing the app's touches.
+        _controller.setInteractive(_passesTouches);
+      }
+    } else if (!_failed &&
+        isRouteCurrent &&
+        _rect != null &&
+        (!widget.hidden || widget.behind)) {
+      // A behind surface is created even when hidden (native keeps it hidden and the hole stays
+      // closed with the fallback), so showing it later costs no engine start.
       _create();
     }
   }
@@ -223,6 +284,7 @@ class _CupertinoHostedKeyboardSurfaceState
         hidden: hidden,
         rect: rect,
         id: id,
+        behind: widget.behind,
       );
     } catch (error) {
       debugPrint('[cik] surface hosting failed: $error');
@@ -247,8 +309,15 @@ class _CupertinoHostedKeyboardSurfaceState
       setState(() => _failed = true);
       return;
     }
-    _hosted = true;
-    _hostId = id;
+    // The hole is see-through from the moment the surface is live: the build
+    // swaps the app's fallback for the transparent hole.
+    setState(() {
+      _hosted = true;
+      _hostId = id;
+    });
+    if (widget.behind) {
+      _controller.setInteractive(_passesTouches);
+    }
     final latest = _rect;
     if (latest != null && latest != rect) {
       // The area changed while the engine was starting; native applied the
@@ -282,8 +351,10 @@ class _CupertinoHostedKeyboardSurfaceState
         // widget's route is current again. The id names the displaced host: a
         // surface that displaced someone else must not drop its own ownership.
         if (_hostId != null && event['id'] == _hostId) {
-          _hostId = null;
-          _hosted = false;
+          setState(() {
+            _hostId = null;
+            _hosted = false;
+          });
         }
         break;
     }
