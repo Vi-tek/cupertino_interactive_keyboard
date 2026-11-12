@@ -34,6 +34,8 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
   private var hostedSurface: CIKHostedSurface?
   /// A surface rectangle that arrived while the keyboard was being dragged; applied on settle.
   private var pendingSurfaceRect: CGRect?
+  /// The hidden scroll view that drives the interactive dismissal for a behind surface.
+  private weak var surfaceDismissScrollView: CIKScrollView?
   /// The main view's opacity before a behind surface made it non-opaque.
   private var savedViewOpaque: Bool?
   /// The view controller whose opacity a behind surface changed.
@@ -395,6 +397,11 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
   /// The surface container clips a fixed-size engine view that is moved by a transform; the
   /// rectangle the app reports decides the container's top and the engine view's height (the
   /// safe-area bottom is excluded, so the hosted engine's safe area never changes).
+  ///
+  /// A behind surface gets its own hidden scroll view inside the container: the surface is a
+  /// sibling of the Flutter view, so the Flutter view's interactive-dismissal recognizers never see
+  /// drags that land on it. The container's scroll view drives the same UIKit interactive dismissal
+  /// for those touches.
   private func createHostedSurface(
     _ config: NativeAccessoryConfig,
     rect: CGRect,
@@ -447,6 +454,19 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     surface.host(hosted.viewController.view, contentHeight: contentHeight)
     hosted.viewController.didMove(toParent: flutterViewController)
     flutterView.layoutIfNeeded()
+
+    if config.behind {
+      // Drags on the surface never reach the Flutter view's recognizers (the surface is a sibling
+      // below it), so the surface carries its own hidden scroll view whose pan drives UIKit's
+      // interactive keyboard dismissal, exactly like the main one does for main-engine touches.
+      let dismiss = CIKScrollView()
+      dismiss.frame = surface.bounds
+      dismiss.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+      dismiss.scrollabeRects = [0: rect]
+      surface.addSubview(dismiss)
+      self.surfaceDismissScrollView = dismiss
+      CIKTrace.log("hosted", "surface dismiss scroll view installed")
+    }
 
     self.accessoryEngine = hosted.engine
     self.accessoryViewController = hosted.viewController
@@ -527,6 +547,7 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
       // paints and the passthrough rectangle move. Do NOT re-apply the inset here: the manager owns
       // the transform, and a model write during a keyboard animation would snap the list.
       surface.holeRect = rect
+      surfaceDismissScrollView?.scrollabeRects = [0: rect]
       let viewHeight = KeyboardManager.shared.hostedSurfaceFlutterView?.bounds.height
       if let viewHeight, viewHeight > 0 {
         surface.updateContentHeight(viewHeight)
@@ -708,6 +729,8 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     accessoryEngine = nil
     hostedAccessoryBar?.removeFromSuperview()
     hostedAccessoryBar = nil
+    surfaceDismissScrollView?.removeFromSuperview()
+    surfaceDismissScrollView = nil
     hostedSurface?.removeFromSuperview()
     hostedSurface = nil
     pendingSurfaceRect = nil
