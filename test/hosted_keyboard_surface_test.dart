@@ -29,6 +29,7 @@ void main() {
     CupertinoHostedInputAccessoryController? controller,
     bool behind = false,
     bool interactive = true,
+    double? contentHeight,
   }) {
     return CupertinoHostedKeyboardSurface(
       entrypoint: entrypoint,
@@ -38,6 +39,7 @@ void main() {
       controller: controller,
       behind: behind,
       interactive: interactive,
+      contentHeight: contentHeight,
     );
   }
 
@@ -64,12 +66,16 @@ void main() {
   }
 
   /// Hosts the surface at a known, resizable rect.
-  Widget sizedApp(double height) {
+  Widget sizedApp(double height, {double? contentHeight}) {
     return MaterialApp(
       home: Scaffold(
         body: Align(
           alignment: Alignment.topLeft,
-          child: SizedBox(width: 400, height: height, child: surface()),
+          child: SizedBox(
+            width: 400,
+            height: height,
+            child: surface(contentHeight: contentHeight),
+          ),
         ),
       ),
     );
@@ -128,6 +134,54 @@ void main() {
         const Rect.fromLTWH(0, 0, 400, 200),
       ]);
       expect(plugin.hostedAccessoryCreateCalls, hasLength(1));
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'keeps a fixed content height and updates it without recreating the surface',
+    (tester) async {
+      await tester.pumpWidget(sizedApp(300, contentHeight: 700));
+      await tester.pump();
+      await tester.pump();
+
+      expect(plugin.hostedAccessoryCreateCalls, hasLength(1));
+      expect(plugin.hostedAccessoryCreateCalls.single['contentHeight'], 700);
+      expect(
+        plugin.hostedAccessoryCreateCalls.single['rect'],
+        const Rect.fromLTWH(0, 0, 400, 300),
+      );
+
+      // The panel shrank: the rectangle only moves the clip. A new content
+      // height means the surface itself changed size (rotation, a cap change).
+      await tester.pumpWidget(sizedApp(200, contentHeight: 640));
+      await tester.pump();
+      await tester.pump();
+
+      expect(plugin.hostedSurfaceContentHeights, [640]);
+      expect(plugin.hostedAccessoryRectUpdates, [
+        const Rect.fromLTWH(0, 0, 400, 200),
+      ]);
+      expect(plugin.hostedAccessoryCreateCalls, hasLength(1));
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'a surface without a fixed content height never reports one',
+    (tester) async {
+      await tester.pumpWidget(sizedApp(300));
+      await tester.pump();
+      await tester.pump();
+      await tester.pumpWidget(sizedApp(200));
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        plugin.hostedAccessoryCreateCalls.single.containsKey('contentHeight'),
+        isFalse,
+      );
+      expect(plugin.hostedSurfaceContentHeights, isEmpty);
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
@@ -534,6 +588,42 @@ void main() {
       ]);
       expect((calls[0].arguments as Map)['behind'], true);
       expect((calls[1].arguments as Map)['interactive'], false);
+    },
+  );
+
+  testWidgets(
+    'sends the fixed content height on the channel',
+    (tester) async {
+      const channel = MethodChannel('cupertino_interactive_keyboard');
+      final implementation = MethodChannelCupertinoInteractiveKeyboard();
+      final calls = <MethodCall>[];
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return call.method == 'createHostedAccessory'
+            ? {'height': 1.0}
+            : null;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+      await implementation.createHostedAccessory(
+        entrypoint: entrypoint,
+        libraryURI: libraryURI,
+        height: 600,
+        rect: const Rect.fromLTWH(0, 100, 390, 600),
+        contentHeight: 700,
+      );
+      await implementation.updateHostedSurfaceContentHeight(640);
+      await implementation.setHostedSurfaceAlpha(.4);
+
+      expect(calls.map((call) => call.method), [
+        'createHostedAccessory',
+        'updateHostedSurfaceContentHeight',
+        'setHostedSurfaceAlpha',
+      ]);
+      expect((calls[0].arguments as Map)['contentHeight'], 700);
+      expect((calls[1].arguments as Map)['height'], 640);
+      expect((calls[2].arguments as Map)['alpha'], .4);
     },
   );
 

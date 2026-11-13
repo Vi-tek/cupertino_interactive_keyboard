@@ -95,6 +95,19 @@ enum KeyboardGeometry {
     -max(0, inset - restingPadding)
   }
 
+  /// The height of a fixed-content surface's engine view, in points.
+  ///
+  /// The app reports the rectangle height the surface keeps when it is fully revealed. The engine
+  /// view stops one safe-area inset above the Flutter view's bottom, so its top edge lands at
+  /// `viewBottom - rectHeight` at every bottom inset: the height and the bottom pin are both
+  /// derived from this one number, and a rotation that changes the inset keeps the pair consistent.
+  static func fixedSurfaceContentHeight(
+    rectHeight: CGFloat,
+    safeAreaBottom: CGFloat
+  ) -> CGFloat {
+    max(0, rectHeight - safeAreaBottom)
+  }
+
   /// The height of a hosted surface's engine view.
   ///
   /// The engine view stops one safe-area inset above the Flutter view's bottom, so the home

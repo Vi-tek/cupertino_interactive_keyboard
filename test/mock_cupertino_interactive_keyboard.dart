@@ -14,11 +14,17 @@ class MockCupertinoInteractiveKeyboard
   /// Heights passed to [updateHostedAccessoryHeight], in call order.
   final hostedAccessoryHeights = <double>[];
 
+  /// Heights passed to [updateHostedSurfaceContentHeight], in call order.
+  final hostedSurfaceContentHeights = <double>[];
+
   /// Hidden values passed to [updateHostedAccessoryHidden], in call order.
   final hostedAccessoryHiddenCalls = <bool>[];
 
   /// Calls passed to [invokeHostedAccessory], in call order.
   final hostedAccessoryInvokes = <Map<String, Object?>>[];
+
+  /// Alphas passed to [setHostedSurfaceAlpha], in call order.
+  final hostedSurfaceAlphas = <double>[];
 
   /// Rects passed to [updateHostedAccessoryRect], in call order.
   final hostedAccessoryRectUpdates = <Rect>[];
@@ -61,6 +67,7 @@ class MockCupertinoInteractiveKeyboard
     Rect? rect,
     int? id,
     bool behind = false,
+    double? contentHeight,
   }) {
     hostedAccessoryCreateCalls.add({
       'entrypoint': entrypoint,
@@ -70,6 +77,7 @@ class MockCupertinoInteractiveKeyboard
       if (rect != null) 'rect': rect,
       if (id != null) 'id': id,
       if (behind) 'behind': true,
+      if (contentHeight != null) 'contentHeight': contentHeight,
     });
     return createHostedAccessoryFuture ?? Future.value(createResultHeight);
   }
@@ -77,6 +85,18 @@ class MockCupertinoInteractiveKeyboard
   @override
   Future<void> updateHostedAccessoryHidden(bool hidden) {
     hostedAccessoryHiddenCalls.add(hidden);
+    return Future.value();
+  }
+
+  @override
+  Future<void> setHostedSurfaceAlpha(double alpha) {
+    hostedSurfaceAlphas.add(alpha);
+    return Future.value();
+  }
+
+  @override
+  Future<void> updateHostedSurfaceContentHeight(double height) {
+    hostedSurfaceContentHeights.add(height);
     return Future.value();
   }
 

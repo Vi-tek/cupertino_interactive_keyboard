@@ -200,6 +200,38 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
         result(nil)
       }
 
+    case "setHostedSurfaceAlpha":
+      guard
+        let args = call.arguments as? [String: Any],
+        let alpha = args["alpha"] as? NSNumber
+      else {
+        return result(FlutterMethodNotImplemented)
+      }
+
+      DispatchQueue.main.async {
+        // A native opacity: the hosted engine keeps its already-rendered
+        // pixels, and Core Animation composites the app's fade for free. A
+        // behind surface must stay opaque: its translucency would break the
+        // hole the app paints over it.
+        if let surface = self.hostedSurface, !surface.isBehind {
+          surface.alpha = CGFloat(alpha.doubleValue)
+        }
+        result(nil)
+      }
+
+    case "updateHostedSurfaceContentHeight":
+      guard
+        let args = call.arguments as? [String: Any],
+        let height = args["height"] as? NSNumber
+      else {
+        return result(FlutterMethodNotImplemented)
+      }
+
+      DispatchQueue.main.async {
+        self.updateHostedSurfaceContentHeight(CGFloat(height.doubleValue))
+        result(nil)
+      }
+
     case "updateHostedAccessoryHidden":
       guard
         let args = call.arguments as? [String: Any],
@@ -419,6 +451,9 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     let surface = CIKHostedSurface()
     surface.isBehind = config.behind
     surface.isHidden = config.hidden
+    // A forward surface the app sizes once: its engine view never changes size, the reported
+    // rectangle's top only clips it. Behind mode never resizes either, for a different reason.
+    var contentBottomInset: CGFloat = 0
     let contentHeight: CGFloat
     if config.behind {
       // Behind mode: the surface goes below the Flutter view and covers it, so the app can paint a
@@ -443,15 +478,30 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
     } else {
       flutterView.addSubview(surface)
       surface.attach(to: flutterView, top: rect.minY, safeAreaBottom: safeBottom)
-      contentHeight = CIKHostedSurface.contentHeight(
-        parentHeight: flutterView.bounds.height,
-        top: rect.minY,
-        safeAreaBottom: safeBottom
-      )
+      if let fixedRectHeight = config.contentHeight {
+        // The app animates this surface's rectangle (a sliding panel): size the engine view once
+        // from the height it has when fully revealed and let the rectangle clip it.
+        contentBottomInset = safeBottom
+        contentHeight = KeyboardGeometry.fixedSurfaceContentHeight(
+          rectHeight: fixedRectHeight,
+          safeAreaBottom: safeBottom
+        )
+      } else {
+        contentHeight = CIKHostedSurface.contentHeight(
+          parentHeight: flutterView.bounds.height,
+          top: rect.minY,
+          safeAreaBottom: safeBottom
+        )
+      }
     }
 
     flutterViewController.addChild(hosted.viewController)
-    surface.host(hosted.viewController.view, contentHeight: contentHeight)
+    surface.host(
+      hosted.viewController.view,
+      contentHeight: contentHeight,
+      fixedRectHeight: config.contentHeight,
+      contentBottomInset: contentBottomInset
+    )
     hosted.viewController.didMove(toParent: flutterViewController)
     flutterView.layoutIfNeeded()
 
@@ -499,8 +549,34 @@ public class CupertinoInteractiveKeyboardPlugin: NSObject, FlutterPlugin {
         + " inset=" + CIKTrace.points(inset)
         + " hidden=" + String(config.hidden)
         + " behind=" + String(config.behind)
+        + " fixed=" + String(config.contentHeight != nil)
+        + " content=" + CIKTrace.points(contentHeight)
     )
     result(["height": Double(contentHeight)])
+  }
+
+  /// Changes the size a fixed-content surface keeps, from a rectangle height.
+  ///
+  /// Only a rotation or an app bar cap change gets here: the rectangle the app animates during a
+  /// panel drag never resizes the hosted engine.
+  private func updateHostedSurfaceContentHeight(_ rectHeight: CGFloat) {
+    guard
+      let surface = hostedSurface,
+      !surface.isBehind,
+      let flutterView = KeyboardManager.shared.flutterViewController?.view
+    else {
+      return
+    }
+    flutterView.layoutIfNeeded()
+    surface.updateContentRectHeight(
+      rectHeight,
+      safeAreaBottom: flutterView.safeAreaInsets.bottom
+    )
+    flutterView.layoutIfNeeded()
+    CIKTrace.log(
+      "hosted",
+      "surface content=" + CIKTrace.points(surface.contentHeight)
+    )
   }
 
   /// Applies a surface rectangle, or defers it while the keyboard is being dragged.

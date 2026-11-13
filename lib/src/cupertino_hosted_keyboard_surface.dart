@@ -42,6 +42,7 @@ class CupertinoHostedKeyboardSurface extends StatefulWidget {
     this.fallback,
     this.behind = false,
     this.interactive = true,
+    this.contentHeight,
   });
 
   /// Dart entrypoint the surface engine runs, e.g. `surfaceMain`.
@@ -83,6 +84,15 @@ class CupertinoHostedKeyboardSurface extends StatefulWidget {
   /// Turn it off while an overlay or a modal owns the screen; ignored by the
   /// forward modes.
   final bool interactive;
+
+  /// The rectangle height the surface keeps when it is fully revealed.
+  ///
+  /// A forward surface sized this way keeps its engine view at that height and
+  /// only clips it as the reported rectangle shrinks: an app that animates the
+  /// rectangle (a sliding panel) then never makes the hosted content lay out
+  /// again while it moves. Null follows the rectangle, which resizes the engine
+  /// view on every change.
+  final double? contentHeight;
 
   @override
   State<CupertinoHostedKeyboardSurface> createState() =>
@@ -153,6 +163,15 @@ class _CupertinoHostedKeyboardSurfaceState
         widget.interactive != oldWidget.interactive &&
         _hosted) {
       _controller.setInteractive(_passesTouches);
+    }
+    final contentHeight = widget.contentHeight;
+    if (contentHeight != null &&
+        contentHeight != oldWidget.contentHeight &&
+        _hosted) {
+      // The surface itself changed size (rotation, an app bar cap change): this
+      // is the one update that may resize the hosted engine.
+      CupertinoInteractiveKeyboardPlatform.instance
+          .updateHostedSurfaceContentHeight(contentHeight);
     }
     if (widget.entrypoint != oldWidget.entrypoint ||
         widget.libraryURI != oldWidget.libraryURI) {
@@ -274,6 +293,7 @@ class _CupertinoHostedKeyboardSurfaceState
     _creating = true;
     final hidden = _shouldHide;
     final id = nextHostedThingId();
+    final contentHeight = widget.contentHeight;
     double? height;
     try {
       height = await CupertinoInteractiveKeyboardPlatform.instance
@@ -285,6 +305,7 @@ class _CupertinoHostedKeyboardSurfaceState
         rect: rect,
         id: id,
         behind: widget.behind,
+        contentHeight: contentHeight,
       );
     } catch (error) {
       debugPrint('[cik] surface hosting failed: $error');
@@ -324,6 +345,13 @@ class _CupertinoHostedKeyboardSurfaceState
       // rectangle it was created with.
       CupertinoInteractiveKeyboardPlatform.instance
           .updateHostedAccessoryRect(latest);
+    }
+    final latestContentHeight = widget.contentHeight;
+    if (latestContentHeight != null && latestContentHeight != contentHeight) {
+      // The surface size changed while the engine was starting (a rotation);
+      // native created it with the old one.
+      CupertinoInteractiveKeyboardPlatform.instance
+          .updateHostedSurfaceContentHeight(latestContentHeight);
     }
     if (hidden != _shouldHide) {
       // The route or the hidden flag changed while the engine was starting.

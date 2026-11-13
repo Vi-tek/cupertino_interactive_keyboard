@@ -77,9 +77,12 @@ abstract class CupertinoInteractiveKeyboardPlatform extends PlatformInterface {
   /// surface (a full-size second engine) instead of a bar: it is the surface's
   /// rectangle in logical pixels, which the plugin uses as its top and derives
   /// the rest from the Flutter view. [id] identifies the caller's host, so the
-  /// released event can name the host it displaced. Returns the total bar
-  /// height, including the bottom safe area, or null on platforms that cannot
-  /// host one.
+  /// released event can name the host it displaced. [contentHeight], for a
+  /// surface, is the rectangle height the content keeps when it is fully
+  /// revealed: the plugin then sizes the engine view once and only clips it as
+  /// [rect] shrinks, instead of resizing it on every reported rectangle.
+  /// Returns the total bar height, including the bottom safe area, or null on
+  /// platforms that cannot host one.
   Future<double?> createHostedAccessory({
     required String entrypoint,
     required String libraryURI,
@@ -88,6 +91,7 @@ abstract class CupertinoInteractiveKeyboardPlatform extends PlatformInterface {
     Rect? rect,
     int? id,
     bool behind = false,
+    double? contentHeight,
   }) {
     throw UnimplementedError(
       'createHostedAccessory() has not been implemented.',
@@ -120,6 +124,29 @@ abstract class CupertinoInteractiveKeyboardPlatform extends PlatformInterface {
     throw UnimplementedError(
       'updateHostedAccessoryHeight() has not been implemented.',
     );
+  }
+
+  /// Changes the height a fixed-content surface keeps, safe area included.
+  ///
+  /// Pass the rectangle height the surface has when fully revealed. A surface
+  /// created with [createHostedAccessory]'s [contentHeight] keeps its engine
+  /// view at that size: moving its rectangle then only clips it, so the hosted
+  /// content never lays out again while the app animates the rectangle (a
+  /// panel drag). A hosted bar ignores it.
+  Future<void> updateHostedSurfaceContentHeight(double height) {
+    throw UnimplementedError(
+      'updateHostedSurfaceContentHeight() has not been implemented.',
+    );
+  }
+
+  /// Sets the hosted surface's opacity, 0 to 1.
+  ///
+  /// The surface is a native view above the Flutter view, so it is outside any
+  /// app [Opacity]; the plugin composites its already-rendered content with
+  /// this alpha instead, which costs the hosted engine no frame at all. A
+  /// forward surface only.
+  Future<void> setHostedSurfaceAlpha(double alpha) {
+    throw UnimplementedError('setHostedSurfaceAlpha() has not been implemented.');
   }
 
   /// Re-reports the hosted surface's rectangle, in logical pixels.

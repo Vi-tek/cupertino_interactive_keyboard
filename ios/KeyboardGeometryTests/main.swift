@@ -51,6 +51,23 @@ func expect(
   }
 }
 
+// A fixed-content surface keeps its content top at viewBottom - rectHeight whatever the bottom
+// inset is: the engine height and its bottom pin are derived from the same number.
+let fixedInsets: [CGFloat] = [0, 21, 34]
+for inset in fixedInsets {
+  let rectHeight: CGFloat = 721
+  let viewBottom: CGFloat = 844
+  let height = KeyboardGeometry.fixedSurfaceContentHeight(
+    rectHeight: rectHeight,
+    safeAreaBottom: inset
+  )
+  expect(
+    viewBottom - inset - height,
+    viewBottom - rectHeight,
+    "the fixed content top ignores the bottom inset (\(inset))"
+  )
+}
+
 // Keyboard fully shown: the viewport has to be inset by the keyboard height.
 expect(
   KeyboardGeometry.inset(bandBottom: 844 - 336, viewBottom: 844, scale: 3),

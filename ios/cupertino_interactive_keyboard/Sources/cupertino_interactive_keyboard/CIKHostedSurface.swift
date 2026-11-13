@@ -25,6 +25,22 @@ final class CIKHostedSurface: UIView {
   private var topConstraint: NSLayoutConstraint?
   private var hostedHeightConstraint: NSLayoutConstraint?
 
+  /// The rectangle height a fixed-content surface keeps, safe area included.
+  ///
+  /// This is the one number the app owns: the engine view's height and its bottom pin are both
+  /// derived from it and the current safe area, so a rotation cannot leave either stale. Nil
+  /// follows the rectangle instead.
+  private(set) var fixedRectHeight: CGFloat?
+
+  /// Whether the engine view keeps its size while the container's top moves.
+  ///
+  /// A fixed-content surface is pinned to the container's bottom, so the container's top is a clip
+  /// the app can move on every frame without the hosted content laying out again.
+  var keepsFixedContent: Bool { fixedRectHeight != nil }
+
+  /// The engine view's bottom pin, so a safe-area change can move it.
+  private var contentBottomConstraint: NSLayoutConstraint?
+
   /// The height the hosted engine view keeps, in points.
   private(set) var contentHeight: CGFloat = 0
 
@@ -66,17 +82,37 @@ final class CIKHostedSurface: UIView {
   }
 
   /// Puts the hosted engine view into the container: fixed height, pinned to the top.
-  func host(_ contentView: UIView, contentHeight: CGFloat) {
+  ///
+  /// A fixed-content view is pinned to the container's bottom instead, so a moving container top
+  /// only clips it. [contentBottomInset] lifts it off the container's bottom: a forward surface
+  /// leaves the home-indicator strip to the app.
+  func host(
+    _ contentView: UIView,
+    contentHeight: CGFloat,
+    fixedRectHeight: CGFloat? = nil,
+    contentBottomInset: CGFloat = 0
+  ) {
     contentView.translatesAutoresizingMaskIntoConstraints = false
     addSubview(contentView)
     self.contentHeight = contentHeight
+    self.fixedRectHeight = fixedRectHeight
     let height = contentView.heightAnchor.constraint(equalToConstant: contentHeight)
-    NSLayoutConstraint.activate([
+    var constraints = [
       contentView.leadingAnchor.constraint(equalTo: leadingAnchor),
       contentView.trailingAnchor.constraint(equalTo: trailingAnchor),
-      contentView.topAnchor.constraint(equalTo: topAnchor),
       height,
-    ])
+    ]
+    if fixedRectHeight != nil {
+      let bottom = contentView.bottomAnchor.constraint(
+        equalTo: bottomAnchor,
+        constant: -contentBottomInset
+      )
+      constraints.append(bottom)
+      contentBottomConstraint = bottom
+    } else {
+      constraints.append(contentView.topAnchor.constraint(equalTo: topAnchor))
+    }
+    NSLayoutConstraint.activate(constraints)
     hostedView = contentView
     hostedHeightConstraint = height
   }
@@ -86,14 +122,50 @@ final class CIKHostedSurface: UIView {
   /// Only called while the keyboard is idle: a resize mid-drag would re-lay the hosted engine out
   /// and reintroduce the lag the surface exists to remove.
   func update(top: CGFloat, safeAreaBottom: CGFloat, parentHeight: CGFloat) {
-    topConstraint?.constant = top
+    // A rectangle that overshoots the view would leave the container with a negative height.
+    topConstraint?.constant = min(top, parentHeight)
     restingPadding = safeAreaBottom
-    hostedHeightConstraint?.constant = CIKHostedSurface.contentHeight(
-      parentHeight: parentHeight,
-      top: top,
+    if keepsFixedContent {
+      // The top constraint is only this surface's clip. Its height and bottom pin follow the
+      // current safe area, so moving the clip never resizes the engine and a rotation keeps the
+      // content's top edge at viewBottom - fixedRectHeight.
+      applyFixedContent(safeAreaBottom: safeAreaBottom)
+    } else {
+      hostedHeightConstraint?.constant = CIKHostedSurface.contentHeight(
+        parentHeight: parentHeight,
+        top: top,
+        safeAreaBottom: safeAreaBottom
+      )
+    }
+    setNeedsLayout()
+  }
+
+  /// Sets the height a fixed-content surface keeps, from a rectangle height.
+  ///
+  /// Only a rotation or an app bar cap change gets here; the rectangle the app animates never
+  /// resizes the hosted engine.
+  func updateContentRectHeight(_ rectHeight: CGFloat, safeAreaBottom: CGFloat) {
+    guard keepsFixedContent else {
+      return
+    }
+    fixedRectHeight = rectHeight
+    applyFixedContent(safeAreaBottom: safeAreaBottom)
+    setNeedsLayout()
+  }
+
+  /// Derives the engine view's height and bottom pin from [fixedRectHeight].
+  private func applyFixedContent(safeAreaBottom: CGFloat) {
+    guard let fixedRectHeight else { return }
+    let height = KeyboardGeometry.fixedSurfaceContentHeight(
+      rectHeight: fixedRectHeight,
       safeAreaBottom: safeAreaBottom
     )
-    setNeedsLayout()
+    restingPadding = safeAreaBottom
+    contentBottomConstraint?.constant = -safeAreaBottom
+    if abs(height - contentHeight) > 0.5 {
+      contentHeight = height
+      hostedHeightConstraint?.constant = height
+    }
   }
 
   /// Updates the hosted engine view height (rotation, split view) for a behind surface.

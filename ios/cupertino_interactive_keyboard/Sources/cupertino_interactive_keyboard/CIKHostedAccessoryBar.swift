@@ -21,6 +21,11 @@ struct NativeAccessoryConfig {
   let id: Int?
   /// Whether the surface is inserted below the Flutter view (behind mode).
   let behind: Bool
+  /// The rectangle height a surface keeps when it is fully revealed, in points, safe area
+  /// included. When set, the engine view is sized once and the rectangle only clips it, so an app
+  /// that animates the rectangle (a sliding panel) never makes the hosted content lay out again.
+  /// Nil follows the rectangle.
+  let contentHeight: CGFloat?
 
   init?(arguments: Any?) {
     guard
@@ -49,6 +54,9 @@ struct NativeAccessoryConfig {
     }
     self.id = (arguments["id"] as? NSNumber)?.intValue
     self.behind = arguments["behind"] as? Bool ?? false
+    self.contentHeight = (arguments["contentHeight"] as? NSNumber).map {
+      CGFloat($0.doubleValue)
+    }
   }
 }
 
